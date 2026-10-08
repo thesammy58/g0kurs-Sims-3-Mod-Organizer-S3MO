@@ -1,20 +1,27 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace s3molib
 {
     public class ProfileModel
     {
         private string _exePath;
+        public string RootPath => _exePath;
+        public string ModsFolderPath => Path.Combine(_exePath, "Mods");
+
         public List<ModModel> ModModels => new List<ModModel>(_modModelLookup.Values);
 
         public ModModel GetModModel(string modName) => _modModelLookup[modName];
+        public bool TryGetModModel(string modName, out ModModel modModel) => _modModelLookup.TryGetValue(modName, out modModel);
         private Dictionary<string, ModModel> _modModelLookup = new Dictionary<string, ModModel>();
 
-        public ProfileModel()
+        /// <param name="rootPath">Folder containing Mods and Profiles (defaults to the program folder).</param>
+        public ProfileModel(string rootPath = null)
         {
-            _exePath = AppDomain.CurrentDomain.BaseDirectory;
+            _exePath = rootPath ?? AppDomain.CurrentDomain.BaseDirectory;
             string modFolderPath = Path.Combine(_exePath, "Mods");
             if (!Directory.Exists(modFolderPath))
                 Directory.CreateDirectory(modFolderPath);
@@ -27,101 +34,109 @@ namespace s3molib
 
             foreach (string path in modsPaths)
             {
-                string name = Path.GetFileNameWithoutExtension(path);
-                _modModelLookup.Add(name, new ModModel(path));
+                string name = Path.GetFileName(path);
+                _modModelLookup[name] = new ModModel(path);
             }
         }
 
+        private string ProfileFolder(string profileName) => Path.Combine(_exePath, "Profiles", profileName);
+
         /// <summary>Read modlist.txt and populate modModelLookup based on the mod order, then save a new modlist.txt</summary>
-        public void Setup(string profileName)
+        public void Setup(string profileName, bool save = true)
         {
-            string profilePath = Path.Combine(_exePath, $"Profiles\\{profileName}");
+            string profilePath = ProfileFolder(profileName);
             if (!Directory.Exists(profilePath))
                 Directory.CreateDirectory(profilePath);
 
-            FileStream stream = null;
+            string modListPath = Path.Combine(profilePath, "modlist.txt");
+            string[] lines = File.Exists(modListPath) ? File.ReadAllLines(modListPath) : Array.Empty<string>();
 
-            string modListPath = Path.Combine(_exePath, $"Profiles\\{profileName}\\modlist.txt");
-            if (!File.Exists(modListPath))
-                stream = File.Create(modListPath);
-            else
-                stream = new FileStream(modListPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-
-            StreamReader r = new StreamReader(stream);
-            List<string> lines = new List<string>();
-
-            while (!r.EndOfStream)
-                lines.Add(r.ReadLine());
-
-            r.Close();
-            stream.Close();
-
-            List<string> remainingMods = new List<string>(_modModelLookup.Keys);
+            HashSet<string> remainingMods = new HashSet<string>(_modModelLookup.Keys);
             int i = 0;
 
             foreach (string line in lines)
             {
-                string modName = line.Substring(1);
-
-                if (!remainingMods.Contains(modName))
+                if (line.Length < 2)
                     continue;
 
-                bool enabled = line.Substring(0, 1).Equals("+") ? true : false;
+                string modName = line.Substring(1);
+
+                if (!remainingMods.Remove(modName))
+                    continue;
+
+                bool enabled = line[0] == '+';
                 _modModelLookup[modName].Update(modName, enabled, i++);
-                remainingMods.Remove(modName);
             }
 
-            foreach (string remainingMod in remainingMods)
+            // New mods go to the bottom, disabled, in a stable (alphabetical) order.
+            List<string> rest = new List<string>(remainingMods);
+            rest.Sort(StringComparer.OrdinalIgnoreCase);
+            foreach (string remainingMod in rest)
                 _modModelLookup[remainingMod].Update(remainingMod, false, i++);
 
-            Save(profileName);
+            if (save)
+                Save(profileName);
         }
 
-        public void CheckModModelConflicts() => ModModel.FastCheckConflict(this);
-
-        public void CheckPackageConflicts()
+        /// <summary>
+        /// Reads every package index (from the cache where possible) and works out all conflicts in one pass.
+        /// Safe to run on a background thread; call <see cref="ApplyAnalysis"/> on the UI thread with the result.
+        /// </summary>
+        public AnalysisResult Analyze(PackageCache cache, CancellationToken cancellationToken = default)
         {
-            foreach (ModModel modModel in _modModelLookup.Values)
-                PackageModel.CheckConflictsInModModel(modModel);
-        }
+            var result = new AnalysisResult();
+            var all = new List<PackageModel>();
+            foreach (ModModel m in _modModelLookup.Values)
+                all.AddRange(m.Packages);
 
-        public void CheckDetailedConflicts()
-        {
-            List<ModModel> conflictingModModels = new List<ModModel>(_modModelLookup.Values).FindAll(m => m.ConflictingModModels.Count > 0);
-            conflictingModModels.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
+            cache?.BeginScan();
+            cache?.ResetCounters();
+            int failed = 0;
 
-            for (int i = 0; i < conflictingModModels.Count - 1; i++)
+            Parallel.ForEach(all, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount), CancellationToken = cancellationToken }, pm =>
             {
-                ModModel modModel = conflictingModModels[i];
-
-                for (int j = i + 1; j < conflictingModModels.Count; j++)
+                try
                 {
-                    ModModel otherModModel = conflictingModModels[j];
-                    modModel.CheckConflicts(otherModModel);
+                    Package package = cache != null ? cache.GetPackage(pm.FilePath, out _) : Package.Load(pm.FilePath);
+                    pm.SetPackage(package);
                 }
-            }
+                catch (Exception ex)
+                {
+                    pm.SetLoadError(ex.Message);
+                    Interlocked.Increment(ref failed);
+                    Logger.LogError($"Couldn't read {pm.ModModel.Name}\\{pm.Name}: {ex.Message}");
+                }
+            });
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            result.PackageCount = all.Count;
+            result.FailedCount = failed;
+            result.CacheHits = cache?.Hits ?? 0;
+            result.Conflicts = ConflictAnalyzer.Analyze(_modModelLookup.Values);
+            cache?.Save();
+            return result;
         }
+
+        /// <summary>Publishes the conflicts found by <see cref="Analyze"/> to the models (UI thread).</summary>
+        public void ApplyAnalysis(AnalysisResult result) => result.Conflicts.ApplyTo(_modModelLookup.Values);
 
         public void Save(string profileName)
         {
-            string profilePath = Path.Combine(_exePath, $"Profiles\\{profileName}");
+            string profilePath = ProfileFolder(profileName);
             if (!Directory.Exists(profilePath))
                 Directory.CreateDirectory(profilePath);
 
-            FileStream stream = null;
+            string modListPath = Path.Combine(profilePath, "modlist.txt");
 
-            string modListPath = Path.Combine(_exePath, $"Profiles\\{profileName}\\modlist.txt");
-            stream = new FileStream(modListPath, FileMode.Create, FileAccess.Write, FileShare.None);
-
-            StreamWriter w = new StreamWriter(stream);
             List<ModModel> allModModels = new List<ModModel>(_modModelLookup.Values);
             allModModels.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
 
+            List<string> lines = new List<string>(allModModels.Count);
             foreach (ModModel mod in allModModels)
-                w.WriteLine((mod.Enabled ? "+" : "-") + mod.Name);
+                lines.Add((mod.Enabled ? "+" : "-") + mod.Name);
 
-            w.Close();
-            stream.Close();
+            File.WriteAllLines(modListPath, lines);
         }
 
         public void RenameMod(string oldName, string newName)
@@ -130,10 +145,11 @@ namespace s3molib
                 return;
 
             ModModel mod = _modModelLookup[oldName];
-            mod.Update(newName, mod.Enabled, mod.Priority);
 
             string modsFolderPath = Path.Combine(_exePath, "Mods");
             Directory.Move(Path.Combine(modsFolderPath, oldName), Path.Combine(modsFolderPath, newName));
+
+            mod.Update(newName, mod.Enabled, mod.Priority);
 
             _modModelLookup.Remove(oldName);
             _modModelLookup.Add(newName, mod);
@@ -150,7 +166,9 @@ namespace s3molib
 
                 string[] lines = File.ReadAllLines(modListPath);
 
-                int i = Array.FindIndex(lines, l => l.Substring(1).Equals(oldName));
+                int i = Array.FindIndex(lines, l => l.Length > 1 && l.Substring(1).Equals(oldName));
+                if (i < 0)
+                    continue;
                 lines[i] = lines[i].Substring(0, 1) + newName;
 
                 File.WriteAllLines(modListPath, lines);
@@ -159,12 +177,13 @@ namespace s3molib
 
         public string CreateEmptyMod()
         {
-            string path = Path.Combine(_exePath, $"Mods\\New Mod");
+            string modsFolder = Path.Combine(_exePath, "Mods");
+            string path = Path.Combine(modsFolder, "New Mod");
             if (Directory.Exists(path))
             {
                 int i = 1;
-                while (Directory.Exists(Path.Combine(_exePath, $"Mods\\New Mod ({i})"))) { i++; }
-                path = Path.Combine(_exePath, $"Mods\\New Mod ({i})");
+                while (Directory.Exists(Path.Combine(modsFolder, $"New Mod ({i})"))) { i++; }
+                path = Path.Combine(modsFolder, $"New Mod ({i})");
             }
             Directory.CreateDirectory(path);
             string modName = Path.GetFileName(path);
@@ -183,5 +202,34 @@ namespace s3molib
             _modModelLookup.Remove(modName);
         }
 
+        /// <summary>
+        /// The packages of enabled mods in merge order: mods by priority, then packages by name.
+        /// Later entries win conflicts. Packages that couldn't be read are returned separately.
+        /// </summary>
+        public List<PackageModel> GetPackagesInBuildOrder(out List<PackageModel> unreadable)
+        {
+            unreadable = new List<PackageModel>();
+            List<ModModel> mods = ModModels.FindAll(m => m.Enabled);
+            mods.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
+
+            List<PackageModel> result = new List<PackageModel>();
+            foreach (ModModel mod in mods)
+                foreach (PackageModel p in mod.GetSortedPackages())
+                {
+                    if (p.LoadError != null)
+                        unreadable.Add(p);
+                    else
+                        result.Add(p);
+                }
+            return result;
+        }
+    }
+
+    public sealed class AnalysisResult
+    {
+        public int PackageCount { get; internal set; }
+        public int FailedCount { get; internal set; }
+        public int CacheHits { get; internal set; }
+        public ConflictResult Conflicts { get; internal set; }
     }
 }

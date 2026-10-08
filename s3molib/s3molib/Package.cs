@@ -1,162 +1,242 @@
-﻿using System;
+using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace s3molib
 {
     public class Package
     {
-        private const uint Magic = 1179664964; // 0x46504244 FPBD
-        private const uint Major = 2;
-        private const uint Minor = 0;
-        private const uint IndexVersion = 3;
+        internal const uint Magic = 1179664964; // 0x46504244 FPBD
+        internal const uint Major = 2;
+        internal const uint Minor = 0;
+        internal const uint IndexVersion = 3;
+        internal const int HeaderSize = 96;
+
+        /// <summary>Resource types that are never merged and never reported as conflicts (sims3pack manifest, name map).</summary>
+        public static bool IsIgnoredType(uint type) => type == 0x73E93EEB || type == 0x0166038C;
 
         public string FilePath { get; private set; }
         public void ChangePath(string path) => FilePath = path;
         public uint IndexCount { get; private set; }
         public uint IndexLength { get; private set; }
-        public uint IndexPosition { get; private set; }
+        public uint IndexPosition { get; internal set; }
 
 
         /// <summary> Read-only. Returns a cloned list of the actual list. Adding or removing items to this will not do anything.</summary>
         public List<ResourceEntry> ResourceEntries => new List<ResourceEntry>(_resourceEntries);
-        private List<ResourceEntry> _resourceEntries = new List<ResourceEntry>();
+
+        /// <summary>The entries in index order, without copying the list.</summary>
+        public IReadOnlyList<ResourceEntry> Entries => _resourceEntries;
+
+        internal List<ResourceEntry> EntryList => _resourceEntries;
+        private readonly List<ResourceEntry> _resourceEntries = new List<ResourceEntry>();
+
+        // Key -> first entry with that key. Built on first use; replaces the old linear List.Find.
+        private Dictionary<ResourceKey, ResourceEntry> _lookup;
+        private readonly object _lookupLock = new object();
+
+        private Dictionary<ResourceKey, ResourceEntry> Lookup
+        {
+            get
+            {
+                var lookup = _lookup;
+                if (lookup != null)
+                    return lookup;
+
+                lock (_lookupLock)
+                {
+                    if (_lookup == null)
+                    {
+                        var d = new Dictionary<ResourceKey, ResourceEntry>(_resourceEntries.Count);
+                        foreach (ResourceEntry r in _resourceEntries)
+                            d.TryAdd(r.Key, r);
+                        _lookup = d;
+                    }
+                    return _lookup;
+                }
+            }
+        }
 
 
         /// <summary>Create a new blank package at path</summary>
         /// <param name="writeExtra">Write some extra bytes so s3pe can open the file.</param>
         public static Package New(string path, bool writeExtra = false)
         {
-            if (!Directory.Exists(Path.GetDirectoryName(path)))
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-
             if (Path.GetFileName(path) == "")
                 throw new Exception("Need filename to create file");
 
-            if (Path.GetExtension(path) != ".package")
-                Path.ChangeExtension(path, ".package");
+            if (!Directory.Exists(Path.GetDirectoryName(path)))
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
 
-            //Logger.Log($"Creating new package '{Path.GetFileName(path)}' at {Path.GetDirectoryName(path)}");
+            if (!string.Equals(Path.GetExtension(path), ".package", StringComparison.OrdinalIgnoreCase))
+                path = Path.ChangeExtension(path, ".package");
 
-            FileStream stream = new FileStream(path, FileMode.Create);
-            BinaryWriter w = new BinaryWriter(stream);
+            using (FileStream stream = new FileStream(path, FileMode.Create))
+            using (BinaryWriter w = new BinaryWriter(stream))
+            {
+                WriteBlankHeader(stream, w);
 
+                if (writeExtra) // Exactly same file as blank package generated from s3pe
+                {
+                    w.Write(7);
+                    w.Write(new byte[12]);
+                    stream.Position = 44; // 0x2C
+                    w.Write(16);
+                    w.Flush();
+                    return new Package(path, 0, 16, HeaderSize);
+                }
+
+                w.Flush();
+                return new Package(path, 0, 0, HeaderSize);
+            }
+        }
+
+        /// <summary>Writes the 96 byte header of an empty package (identical to what older versions wrote).</summary>
+        internal static void WriteBlankHeader(Stream stream, BinaryWriter w)
+        {
             w.Write(Magic);
             w.Write(Major);
             w.Write(Minor);
-            stream.Position = 60; // 0x3C
-            w.Write(IndexVersion);
-            w.Write(96); // 0x60
-            w.Write(new byte[28]);
-
-            Package package = null;
-
-            if (writeExtra) // Exactly same file as blank package generated from s3pe
-            {
-                w.Write(7);
-                w.Write(new byte[12]);
-                stream.Position = 44; // 0x2C
-                w.Write(16);
-                package = new Package(path, 0, 16, 96);
-            }
-            else
-                package = new Package(path, 0, 0, 96);
-
-            w.Flush();
-            stream.Close();
-            return package;
+            w.Write(new byte[48]);          // 0x0C - 0x3C
+            w.Write(IndexVersion);          // 0x3C
+            w.Write(HeaderSize);            // 0x40 index position
+            w.Write(new byte[28]);          // 0x44 - 0x60
         }
 
-        /// <summary>Load the package at path</summary>
+        /// <summary>Load the package index at path (resource data is read on demand).</summary>
         public static Package Load(string path)
         {
             if (!File.Exists(path))
                 throw new Exception($"File does not exists - {path}");
-            if (Path.GetExtension(path) != ".package")
+            if (!string.Equals(Path.GetExtension(path), ".package", StringComparison.OrdinalIgnoreCase))
                 throw new Exception($"File is not a package file - {path}");
-            if (new FileInfo(path).Length < 96)
-                throw new Exception($"File header size is smaller than '96' bytes - {path}");
 
-            FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            BinaryReader r = new BinaryReader(stream);
+            using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess))
+            {
+                long fileLength = stream.Length;
+                if (fileLength < HeaderSize)
+                    throw new Exception($"File header size is smaller than '96' bytes - {path}");
 
-            List<byte> unknown = new List<byte>();
-            uint magic = r.ReadUInt32();
-            uint major = r.ReadUInt32();
-            uint minor = r.ReadUInt32();
-            unknown.AddRange(r.ReadBytes(24));
-            uint indexCount = r.ReadUInt32();
-            unknown.AddRange(r.ReadBytes(4));
-            uint indexLength = r.ReadUInt32();
-            unknown.AddRange(r.ReadBytes(12));
-            uint indexVersion = r.ReadUInt32();
-            uint indexPosition = r.ReadUInt32();
-            unknown.AddRange(r.ReadBytes(28));
+                Span<byte> h = stackalloc byte[HeaderSize];
+                stream.ReadExactly(h);
 
-            if (magic != Magic)
-                throw new Exception($"File magic does not match DBPF - {path}");
-            if (major != Major)
-                Logger.LogWarning($"File major '{major}' does not match '${Major}' - {path}");
-            if (minor != Minor)
-                Logger.LogWarning($"File minor '{minor}' does not match $'{Minor}' - {path}");
-            if (indexVersion != IndexVersion)
-                Logger.LogWarning($"File index version '{indexVersion}' does not match '{IndexVersion}' - {path}");
-            if (indexPosition == 0)
-                Logger.LogWarning($"File does not have index position - {path}");
+                uint magic = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(0));
+                uint major = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(4));
+                uint minor = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(8));
+                uint indexCount = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(36));
+                uint indexLength = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(44));
+                uint indexVersion = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(60));
+                uint indexPosition = BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(64));
 
-            foreach (byte b in unknown)
-                if (b != 0)
+                if (magic != Magic)
+                    throw new Exception($"File magic does not match DBPF - {path}");
+                if (major != Major)
+                    Logger.LogWarning($"File major '{major}' does not match '{Major}' - {path}");
+                if (minor != Minor)
+                    Logger.LogWarning($"File minor '{minor}' does not match '{Minor}' - {path}");
+                if (indexVersion != IndexVersion)
+                    Logger.LogWarning($"File index version '{indexVersion}' does not match '{IndexVersion}' - {path}");
+                if (indexPosition == 0)
+                    Logger.LogWarning($"File does not have index position - {path}");
+
+                // Unused header areas: 12-36, 40-44, 48-60, 68-96. Warn once per file, not once per byte.
+                if (HasNonZero(h.Slice(12, 24)) || HasNonZero(h.Slice(40, 4)) || HasNonZero(h.Slice(48, 12)) || HasNonZero(h.Slice(68, 28)))
                     Logger.LogWarning($"File contains non-zero unused byte(s) - {path}");
 
-            stream.Position = indexPosition;
-            uint bitFlag = r.ReadUInt32(); // bitflag used to indicate common entries, reducing entries for each resources
+                Package package = new Package(path, indexCount, indexLength, indexPosition);
 
-            int commonCount = 0;
+                if (indexCount == 0)
+                    return package;
 
-            if ((bitFlag & 0x01) != 0) // 0001 - Type
-                commonCount += 1;
-            if ((bitFlag & 0x02) != 0) // 0010 - Group
-                commonCount += 1;
-            if ((bitFlag & 0x04) != 0) // 0100 - First half of Instance ID
-                commonCount += 1;
-            if ((bitFlag & 0x08) != 0) // 1000 - ?? Probably second half of Instance ID
-                commonCount += 1;
+                if ((long)indexPosition + 4 > fileLength)
+                    throw new Exception($"File index position '{indexPosition}' is beyond the end of the file - {path}");
 
-            if (indexLength != (4 + commonCount * 4 + ((32 - commonCount * 4) * indexCount)))
-                throw new Exception($"File index length '{indexLength}' does not match expected value of '{4 + commonCount * 4 + ((32 - commonCount * 4) * indexCount)}' - {path}");
+                stream.Position = indexPosition;
+                Span<byte> flagBytes = stackalloc byte[4];
+                stream.ReadExactly(flagBytes);
+                uint bitFlag = BinaryPrimitives.ReadUInt32LittleEndian(flagBytes); // bitflag used to indicate common entries, reducing entries for each resources
 
-            uint[] common = new uint[commonCount];
+                // Bits 0-3 mark Type, Group, Instance (high) and Instance (low) as shared by every entry.
+                int commonCount = 0;
+                for (int b = 0; b < 4; b++)
+                    if ((bitFlag & (1u << b)) != 0)
+                        commonCount++;
 
-            for (int i = 0; i < commonCount; i++)
-                common[i] = r.ReadUInt32();
+                int entrySize = 32 - commonCount * 4;
+                long expectedLength = 4 + commonCount * 4 + (long)entrySize * indexCount;
 
-            int c = 0;
-            Package package = new Package(path, indexCount, indexLength, indexPosition);
+                if (indexLength != expectedLength)
+                    throw new Exception($"File index length '{indexLength}' does not match expected value of '{expectedLength}' - {path}");
+                if ((long)indexPosition + expectedLength > fileLength)
+                    throw new Exception($"File index extends beyond the end of the file - {path}");
 
-            for (int i = 0; i < indexCount; i++)
-            {
-                uint type = (bitFlag & 0x01) != 0 ? common[c++] : r.ReadUInt32();
-                uint group = (bitFlag & 0x02) != 0 ? common[c++] : r.ReadUInt32();
-                uint id1 = (bitFlag & 0x04) != 0 ? common[c++] : r.ReadUInt32();
-                uint id2 = r.ReadUInt32();
-                uint chunkOffset = r.ReadUInt32();
-                uint fileSize = r.ReadUInt32();
-                uint memSize = r.ReadUInt32();
-                ushort compressed = r.ReadUInt16();
-                ushort unknown2 = r.ReadUInt16();
+                byte[] index = new byte[expectedLength - 4];
+                stream.ReadExactly(index, 0, index.Length);
 
-                c = 0;
-                package._resourceEntries.Add(new ResourceEntry(package, type, group, id1, id2, chunkOffset, fileSize, memSize, compressed, unknown2));
+                int p = 0;
+                uint commonType = 0, commonGroup = 0, commonId1 = 0, commonId2 = 0;
+                if ((bitFlag & 0x01) != 0) { commonType = ReadU32(index, ref p); }
+                if ((bitFlag & 0x02) != 0) { commonGroup = ReadU32(index, ref p); }
+                if ((bitFlag & 0x04) != 0) { commonId1 = ReadU32(index, ref p); }
+                if ((bitFlag & 0x08) != 0) { commonId2 = ReadU32(index, ref p); }
+
+                package._resourceEntries.Capacity = (int)indexCount;
+
+                for (int i = 0; i < indexCount; i++)
+                {
+                    uint type = (bitFlag & 0x01) != 0 ? commonType : ReadU32(index, ref p);
+                    uint group = (bitFlag & 0x02) != 0 ? commonGroup : ReadU32(index, ref p);
+                    uint id1 = (bitFlag & 0x04) != 0 ? commonId1 : ReadU32(index, ref p);
+                    uint id2 = (bitFlag & 0x08) != 0 ? commonId2 : ReadU32(index, ref p);
+                    uint chunkOffset = ReadU32(index, ref p);
+                    uint fileSize = ReadU32(index, ref p);
+                    uint memSize = ReadU32(index, ref p);
+                    ushort compressed = BinaryPrimitives.ReadUInt16LittleEndian(index.AsSpan(p)); p += 2;
+                    ushort unknown2 = BinaryPrimitives.ReadUInt16LittleEndian(index.AsSpan(p)); p += 2;
+
+                    package._resourceEntries.Add(new ResourceEntry(package, type, group, id1, id2, chunkOffset, fileSize, memSize, compressed, unknown2));
+                }
+
+                return package;
             }
+        }
 
-            stream.Close();
+        private static uint ReadU32(byte[] b, ref int p)
+        {
+            uint v = BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(p));
+            p += 4;
+            return v;
+        }
+
+        private static bool HasNonZero(ReadOnlySpan<byte> s)
+        {
+            foreach (byte b in s)
+                if (b != 0)
+                    return true;
+            return false;
+        }
+
+        /// <summary>Recreate a package from an index that was read earlier (used by the index cache).</summary>
+        internal static Package FromIndex(string path, uint indexCount, uint indexLength, uint indexPosition, IReadOnlyList<CachedEntry> entries)
+        {
+            Package package = new Package(path, indexCount, indexLength, indexPosition);
+            package._resourceEntries.Capacity = entries.Count;
+            foreach (CachedEntry e in entries)
+                package._resourceEntries.Add(new ResourceEntry(package, e.Type, e.Group, e.ID1, e.ID2, e.ChunkOffset, e.FileSize, e.MemSize, e.Compressed, e.Unknown2));
             return package;
         }
 
-        /// <summary>Merge source packages into one package, or more if the package exceeds the file size limit, and save them at the directory path.</summary>
+        internal struct CachedEntry
+        {
+            public uint Type, Group, ID1, ID2, ChunkOffset, FileSize, MemSize;
+            public ushort Compressed, Unknown2;
+        }
+
+        /// <summary>Merge source packages into one package, or more if the package exceeds the file size limit, and save them at the directory path.
+        /// Sources are in ascending priority: when two packages contain the same resource, the one later in the list wins.
+        /// Produces the same files as the original implementation, but reads each source package through a single open stream.</summary>
         /// <returns>True if successful. False if failed.</returns>
         public static bool Merge(string directoryPath, IEnumerable<Package> source, uint fileSizeLimit = 1000000000, Action<int> progress = null)
         {
@@ -166,58 +246,35 @@ namespace s3molib
             if (!Directory.Exists(directoryPath))
                 Directory.CreateDirectory(directoryPath);
 
-            int mergedCount = 1;
-            Package package = Package.New(Path.Combine(directoryPath, $"Merge{mergedCount++}.package"));
-            HashSet<string> resourceKeys = new HashSet<string>();
+            IList<Package> sources = source as IList<Package> ?? source.ToList();
+            HashSet<ResourceKey> resourceKeys = new HashSet<ResourceKey>();
+            byte[] buffer = new byte[1 << 16];
 
-            FileStream stream = new FileStream(package.FilePath, FileMode.Open, FileAccess.Write, FileShare.Read);
-            BinaryWriter w = new BinaryWriter(stream);
-            stream.Position = package.IndexPosition;
-
-            for (int i = source.Count() - 1; i >= 0; i--)
+            using (MergeWriter writer = new MergeWriter(directoryPath, fileSizeLimit, 1))
             {
-                Package importPackage = source.ElementAt(i);
-                progress?.Invoke(i);
-                //Logger.Log($"Merging {Path.GetFileName(importPackage.FilePath)} into {Path.GetFileName(package.FilePath)}.");
-                foreach (ResourceEntry re in importPackage.ResourceEntries)
+                for (int i = sources.Count - 1; i >= 0; i--)
                 {
-                    if (!resourceKeys.Add(re.ToString()) || re.Type == 0x73e93eeb || re.Type == 0x0166038c) // 0x73e93eeb: sims3pack manifest, 0x0166038c: namemap
-                        continue;
+                    Package importPackage = sources[i];
+                    progress?.Invoke(i);
 
-                    if (stream.Position >= fileSizeLimit)
+                    using (PackageReader reader = importPackage.OpenReader())
                     {
-                        package.IndexPosition = (uint)stream.Position;
-                        package.WriteIndex(w);
-                        package.WriteHeader(stream, w);
-                        w.Flush();
-                        stream.Close();
+                        foreach (ResourceEntry re in importPackage._resourceEntries)
+                        {
+                            if (!resourceKeys.Add(re.Key) || IsIgnoredType(re.Type))
+                                continue;
 
-                        package = Package.New(Path.Combine(directoryPath, $"Merge{mergedCount++}.package"));
-                        stream = new FileStream(package.FilePath, FileMode.Open, FileAccess.Write, FileShare.None);
-                        w = new BinaryWriter(stream);
-                        stream.Position = package.IndexPosition;
+                            int length = reader.ReadRaw(re, ref buffer);
+                            writer.Write(re, buffer, length);
+                        }
                     }
-
-                    byte[] data = importPackage.GetRawData(re);
-                    if (data == null)
-                        throw new Exception($"Unable to obtain data from {Path.GetFileName(importPackage.FilePath)}");
-
-                    package._resourceEntries.Add(new ResourceEntry(importPackage, re.Type, re.Group, re.ID1, re.ID2, (uint)stream.Position, re.FileSize, re.MemSize, re.Compressed, re.Unknown2));
-                    w.Write(data, 0, (int)re.FileSize);
                 }
+                writer.Complete();
             }
-
-            package.IndexPosition = (uint)stream.Position;
-            package.WriteIndex(w);
-            package.WriteHeader(stream, w);
-            w.Close();
-            stream.Close();
-
-            //Logger.Log("Merge Process finished");
             return true;
         }
 
-        private void WriteIndex(BinaryWriter writer)
+        internal void WriteIndex(BinaryWriter writer)
         {
             writer.Write(0);
 
@@ -235,53 +292,37 @@ namespace s3molib
             }
         }
 
-        private void WriteHeader(FileStream stream, BinaryWriter writer)
+        internal void WriteHeader(Stream stream, BinaryWriter writer)
         {
             IndexCount = (uint)_resourceEntries.Count;
             IndexLength = 4 + IndexCount * 32;
 
+            writer.Flush();
             stream.Position = 36; // 0x24
             writer.Write(IndexCount);
             stream.Position = 44; // 0x2C
             writer.Write(IndexLength);
             stream.Position = 64; // 0x40
             writer.Write(IndexPosition);
+            writer.Flush();
         }
+
+        /// <summary>Opens the package file once for reading many resources. Dispose when done.</summary>
+        public PackageReader OpenReader() => new PackageReader(this);
 
         public byte[] GetRawData(ResourceEntry resourceEntry)
         {
-            if (!File.Exists(FilePath))
-                throw new Exception($"File does not exist anymore since the last time it was opened - {FilePath}");
-            if (!_resourceEntries.Contains(resourceEntry))
-                throw new Exception($"File does not contain resource entry the last time it was opened, try call Package.Open() again'{resourceEntry}' - {FilePath}");
-
-            int offset = (int)resourceEntry.ChunkOffset;
-            int length = (int)resourceEntry.FileSize;
-
-            byte[] data = new byte[length];
-
-            using (FileStream stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            {
-                stream.Position = offset;
-                stream.Read(data, 0, data.Length);
-                return data;
-            }
+            using (PackageReader reader = OpenReader())
+                return reader.ReadRaw(resourceEntry);
         }
 
         public byte[] GetUncompressedData(ResourceEntry resourceEntry)
         {
-            byte[] data = GetRawData(resourceEntry);
-
-            if (resourceEntry.FileSize != resourceEntry.MemSize)
-            {
-                MemoryStream stream = new MemoryStream(data);
-                data = s3pi.Package.Compression.UncompressStream(stream, (int)resourceEntry.FileSize, (int)resourceEntry.MemSize);
-                stream.Close();
-            }
-            return data;
+            using (PackageReader reader = OpenReader())
+                return reader.ReadUncompressed(resourceEntry);
         }
 
-        private Package(string path, uint indexCount, uint indexLength, uint indexPosition)
+        internal Package(string path, uint indexCount, uint indexLength, uint indexPosition)
         {
             IndexCount = indexCount;
             IndexLength = indexLength;
@@ -289,12 +330,15 @@ namespace s3molib
             FilePath = path;
         }
 
+        internal bool Owns(ResourceEntry resourceEntry) => ReferenceEquals(resourceEntry.Package, this);
+
+        public bool TryGetEntry(ResourceKey key, out ResourceEntry entry) => Lookup.TryGetValue(key, out entry);
+
+        public bool ContainsKey(ResourceKey key) => Lookup.ContainsKey(key);
+
         /// <param name="ownResourceEntry">Resource entry that belongs to this package.</param>
         public bool HasConflictingResourceEntry(ResourceEntry resourceEntry, out ResourceEntry ownResourceEntry) =>
-            (ownResourceEntry = _resourceEntries.Find(r =>
-                r.Type.Equals(resourceEntry.Type) &&
-                r.Group.Equals(resourceEntry.Group) &&
-                r.Instance.Equals(resourceEntry.Instance))) != null;
+            Lookup.TryGetValue(resourceEntry.Key, out ownResourceEntry);
 
 
         public bool AddResourceEntry(ResourceEntry resourceEntry, bool replaceConflicting = true)
@@ -303,23 +347,27 @@ namespace s3molib
             {
                 if (replaceConflicting)
                 {
-                    Logger.LogDebug($"Conflicting resouce key '{resourceEntry.ToString()}', it will be replaced by the latter. '{Path.GetFileName(FilePath)}'    '{Path.GetFileName(resourceEntry.Package.FilePath)}'");
+                    Logger.LogDebug($"Conflicting resouce key '{resourceEntry}', it will be replaced by the latter. '{Path.GetFileName(FilePath)}'    '{Path.GetFileName(resourceEntry.Package.FilePath)}'");
                     _resourceEntries.Remove(ownResourceEntry);
                 }
                 else
                 {
-                    Logger.LogDebug($"Conflicting resouce key '{resourceEntry.ToString()}', the latter will be rejected. '{Path.GetFileName(FilePath)}'    '{Path.GetFileName(resourceEntry.Package.FilePath)}'");
+                    Logger.LogDebug($"Conflicting resouce key '{resourceEntry}', the latter will be rejected. '{Path.GetFileName(FilePath)}'    '{Path.GetFileName(resourceEntry.Package.FilePath)}'");
                     return false;
                 }
             }
             _resourceEntries.Add(resourceEntry);
+            _lookup = null;
             return true;
         }
 
         public bool RemoveResourceEntry(ResourceEntry resourceEntry)
         {
             if (_resourceEntries.Remove(resourceEntry))
+            {
+                _lookup = null;
                 return true;
+            }
 
             Logger.LogDebug($"Package does not contain resource entry - {FilePath}");
             return false;
@@ -327,26 +375,164 @@ namespace s3molib
 
         /// <summary>Checks for conflicts with other package.</summary>
         /// <returns>True if conflicting. False if not conflicting.</returns>
-        /// <param name="conflictedOtherResourceEntries">Resource entries from packages that conflict with this instance.</param>> 
+        /// <param name="conflictedOtherResourceEntries">Resource entries from packages that conflict with this instance.</param>>
         /// <param name="fastCheck">Returns true directly immediately after a conflict is found</param>
         public bool IsConflictingWith(Package package, out List<ResourceEntry> conflictedResourceEntries, out List<ResourceEntry> conflictedOtherResourceEntries, bool fastCheck = false)
         {
             conflictedResourceEntries = new List<ResourceEntry>();
             conflictedOtherResourceEntries = new List<ResourceEntry>();
-            foreach (var otherR in package.ResourceEntries)
+            var lookup = Lookup;
+
+            foreach (var otherR in package._resourceEntries)
             {
-                if (HasConflictingResourceEntry(otherR, out ResourceEntry ownR) && ownR.Type != 0x0166038C && ownR.Type != 0x73E93EEB)
+                if (lookup.TryGetValue(otherR.Key, out ResourceEntry ownR) && !IsIgnoredType(ownR.Type))
                 {
                     if (fastCheck)
                         return true;
 
                     conflictedResourceEntries.Add(ownR);
                     conflictedOtherResourceEntries.Add(otherR);
-                    //Logger.LogDebug($"Conflict '{ownR.ToString()}'    '{Path.GetFileName(FilePath)}'    '{Path.GetFileName(package.FilePath)}'");
                 }
             }
             return (conflictedOtherResourceEntries.Count > 0);
         }
 
+    }
+
+    /// <summary>Reads resource data from one package through a single open file handle.</summary>
+    public sealed class PackageReader : IDisposable
+    {
+        private readonly Package _package;
+        private readonly FileStream _stream;
+
+        internal PackageReader(Package package)
+        {
+            _package = package;
+            if (!File.Exists(package.FilePath))
+                throw new Exception($"File does not exist anymore since the last time it was opened - {package.FilePath}");
+            _stream = new FileStream(package.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan);
+        }
+
+        /// <summary>Reads the stored (possibly compressed) bytes of a resource into buffer, growing it if needed.</summary>
+        /// <returns>Number of bytes read.</returns>
+        public int ReadRaw(ResourceEntry resourceEntry, ref byte[] buffer)
+        {
+            if (!_package.Owns(resourceEntry))
+                throw new Exception($"Resource entry '{resourceEntry}' does not belong to {_package.FilePath}");
+
+            int length = (int)resourceEntry.FileSize;
+            long end = (long)resourceEntry.ChunkOffset + length;
+            if (end > _stream.Length)
+                throw new Exception($"Resource '{resourceEntry}' points past the end of {Path.GetFileName(_package.FilePath)} - the package is probably truncated or corrupt.");
+
+            if (buffer == null || buffer.Length < length)
+                buffer = new byte[Math.Max(length, buffer == null ? 0 : buffer.Length * 2)];
+
+            if (_stream.Position != resourceEntry.ChunkOffset)
+                _stream.Position = resourceEntry.ChunkOffset;
+            _stream.ReadExactly(buffer, 0, length);
+            return length;
+        }
+
+        public byte[] ReadRaw(ResourceEntry resourceEntry)
+        {
+            byte[] data = new byte[resourceEntry.FileSize];
+            ReadRaw(resourceEntry, ref data);
+            return data;
+        }
+
+        public byte[] ReadUncompressed(ResourceEntry resourceEntry)
+        {
+            byte[] data = ReadRaw(resourceEntry);
+
+            if (resourceEntry.FileSize != resourceEntry.MemSize)
+            {
+                using (MemoryStream stream = new MemoryStream(data))
+                    data = s3pi.Package.Compression.UncompressStream(stream, (int)resourceEntry.FileSize, (int)resourceEntry.MemSize);
+            }
+            return data;
+        }
+
+        public void Dispose() => _stream.Dispose();
+    }
+
+    /// <summary>
+    /// Writes merged packages (Merge1.package, Merge2.package, ...) splitting at a size limit.
+    /// The byte layout matches what the original Package.Merge produced.
+    /// </summary>
+    internal sealed class MergeWriter : IDisposable
+    {
+        private readonly string _directory;
+        private readonly long _sizeLimit;
+        private int _nextNumber;
+
+        private Package _current;
+        private FileStream _stream;
+        private BinaryWriter _writer;
+
+        /// <summary>Files finished by this writer, in order.</summary>
+        public List<Package> Completed { get; } = new List<Package>();
+
+        public MergeWriter(string directory, long sizeLimit, int firstNumber)
+        {
+            _directory = directory;
+            _sizeLimit = sizeLimit;
+            _nextNumber = firstNumber;
+            StartNewFile();
+        }
+
+        public Package Current => _current;
+        public long Position => _stream.Position;
+
+        public static string FileNameFor(int number) => $"Merge{number}.package";
+
+        private void StartNewFile()
+        {
+            string path = Path.Combine(_directory, FileNameFor(_nextNumber++));
+            _current = Package.New(path);
+            _stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read, 1 << 20);
+            _writer = new BinaryWriter(_stream);
+            _stream.Position = _current.IndexPosition;
+        }
+
+        /// <summary>Appends one resource. Starts a new file first if the current one has reached the size limit.</summary>
+        /// <returns>The entry as written into the merged package.</returns>
+        public ResourceEntry Write(ResourceEntry source, byte[] data, int length)
+        {
+            if (_stream.Position >= _sizeLimit)
+            {
+                FinishCurrent();
+                StartNewFile();
+            }
+
+            ResourceEntry written = new ResourceEntry(_current, source.Type, source.Group, source.ID1, source.ID2, (uint)_stream.Position, source.FileSize, source.MemSize, source.Compressed, source.Unknown2);
+            _current.EntryList.Add(written);
+            _writer.Write(data, 0, length);
+            return written;
+        }
+
+        private void FinishCurrent()
+        {
+            _current.IndexPosition = (uint)_stream.Position;
+            _current.WriteIndex(_writer);
+            _current.WriteHeader(_stream, _writer);
+            _writer.Flush();
+            _stream.Dispose();
+            _stream = null;
+            Completed.Add(_current);
+        }
+
+        /// <summary>Finishes the last file. Must be called once all resources are written.</summary>
+        public void Complete()
+        {
+            if (_stream != null)
+                FinishCurrent();
+        }
+
+        public void Dispose()
+        {
+            _stream?.Dispose();
+            _stream = null;
+        }
     }
 }

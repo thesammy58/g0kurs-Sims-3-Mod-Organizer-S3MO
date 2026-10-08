@@ -1,0 +1,644 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
+using ns;
+using s3molib;
+using Orig = s3molib.Original;
+
+namespace S3MO.Tests;
+
+public static class Program
+{
+    static int _failures;
+
+    static void Check(bool ok, string what)
+    {
+        if (!ok)
+        {
+            _failures++;
+            Console.WriteLine($"  FAIL: {what}");
+        }
+    }
+
+    public static int Main(string[] args)
+    {
+        Logger.WarningLoggedEvent += s => { if (Verbose) Console.WriteLine("  [warn] " + s); };
+        Logger.ErrorLoggedEvent += s => Console.WriteLine("  [error] " + s);
+
+        string mode = args.Length > 0 ? args[0] : "test";
+        try
+        {
+            switch (mode)
+            {
+                case "test":
+                    RunAllTests();
+                    break;
+                case "bench":
+                    Benchmark.Run(args.Length > 1 ? int.Parse(args[1]) : 1200);
+                    break;
+                case "verify":
+                    Verify.Run(args[1], args.Length > 2 ? args[2] : null);
+                    break;
+                default:
+                    Console.WriteLine("usage: test | bench [packages] | verify <S3MO folder> [profile]");
+                    return 2;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("EXCEPTION: " + ex);
+            return 3;
+        }
+
+        if (_failures > 0)
+        {
+            Console.WriteLine($"\n{_failures} check(s) FAILED");
+            return 1;
+        }
+        Console.WriteLine("\nAll checks passed.");
+        return 0;
+    }
+
+    public static bool Verbose = false;
+
+    // ------------------------------------------------------------------------------------------------
+
+    static void RunAllTests()
+    {
+        string work = Path.Combine(AppContext.BaseDirectory, "testwork");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        TestLoadEquivalence(work);
+        TestEdgeCases(work);
+        foreach (int seed in new[] { 1, 2, 3 })
+            TestConflictsAndMerge(work, seed);
+        TestCache(work);
+        TestSubfolders(work);
+        foreach (int seed in new[] { 11, 12, 13, 14 })
+            TestIncremental(work, seed, compactThreshold: seed % 2 == 0 ? 1.0 : 0.25);
+        TestTamperDetection(work);
+    }
+
+    // ---------------------------------------------------------------- package reading
+
+    static void TestLoadEquivalence(string work)
+    {
+        Console.WriteLine("Package.Load: new reader vs original reader");
+        var rnd = new Random(7);
+        string dir = Path.Combine(work, "load");
+        var pool = Synthetic.MakePool(rnd, 50);
+        int files = 0;
+        for (int i = 0; i < 60; i++)
+        {
+            var res = Synthetic.MakeResources(rnd, rnd.Next(0, 400), 1, 3000, pool, 0.1);
+            // original reader mis-parses flag 0x08, so only compare flags 0-7 here
+            uint flags = (uint)rnd.Next(8);
+            if (i % 5 == 0) { foreach (var r in res) r.Type = 0x034AEECB; flags |= 1; }
+            string path = Path.Combine(dir, $"p{i}.package");
+            Synthetic.Write(path, res, flags, indexFirst: i % 4 == 1);
+
+            Orig.Package o;
+            try { o = Orig.Package.Load(path); }
+            catch (Exception) { if (res.Count == 0) continue; throw; } // original can't read some empty packages
+            var n = Package.Load(path);
+            files++;
+
+            var oe = o.ResourceEntries; var ne = n.ResourceEntries;
+            Check(oe.Count == ne.Count, $"{path}: entry count {oe.Count} vs {ne.Count}");
+            for (int k = 0; k < Math.Min(oe.Count, ne.Count); k++)
+            {
+                var a = oe[k]; var b = ne[k];
+                bool same = a.Type == b.Type && a.Group == b.Group && a.Instance == b.Instance && a.ChunkOffset == b.ChunkOffset
+                    && a.FileSize == b.FileSize && a.MemSize == b.MemSize && a.Compressed == b.Compressed && a.Unknown2 == b.Unknown2
+                    && a.ToString() == b.ToString();
+                if (!same) { Check(false, $"{path}: entry {k} differs"); break; }
+            }
+            // data reads (raw and uncompressed) agree
+            for (int k = 0; k < Math.Min(20, ne.Count); k++)
+            {
+                Check(o.GetRawData(oe[k]).AsSpan().SequenceEqual(n.GetRawData(ne[k])), "raw data");
+                Check(o.GetUncompressedData(oe[k]).AsSpan().SequenceEqual(n.GetUncompressedData(ne[k])), "uncompressed data");
+            }
+            // conflict check agrees
+            if (i > 0)
+            {
+                var prevO = Orig.Package.Load(Path.Combine(dir, $"p{i - 1}.package"));
+                var prevN = Package.Load(Path.Combine(dir, $"p{i - 1}.package"));
+                bool co = o.IsConflictingWith(prevO, out var lo, out _, false);
+                bool cn = n.IsConflictingWith(prevN, out var ln, out _, false);
+                Check(co == cn && lo.Count == ln.Count, "IsConflictingWith");
+            }
+        }
+
+        // flag 0x08 (shared low instance) - original gets this wrong, check the new reader against the source data
+        {
+            var res = Synthetic.MakeResources(rnd, 100, 1, 100, pool, 0);
+            foreach (var r in res) r.Instance = (r.Instance & 0xFFFFFFFF00000000UL) | 0x12345678;
+            string path = Path.Combine(dir, "flag8.package");
+            Synthetic.Write(path, res, 8);
+            var n = Package.Load(path);
+            Check(n.Entries.Count == 100 && n.Entries.Select(e => e.Instance).SequenceEqual(res.Select(r => r.Instance)), "flag 0x08 parsed correctly");
+            Check(n.Entries.Zip(res).All(z => n.GetRawData(z.First).AsSpan().SequenceEqual(z.Second.Stored)), "flag 0x08 data offsets");
+        }
+        Console.WriteLine($"  compared {files} packages");
+    }
+
+    static void TestEdgeCases(string work)
+    {
+        Console.WriteLine("Edge cases");
+        string dir = Path.Combine(work, "edge");
+        Directory.CreateDirectory(dir);
+
+        // uppercase extension is accepted now
+        var rnd = new Random(3);
+        string upper = Path.Combine(dir, "UPPER.PACKAGE");
+        Synthetic.Write(upper, Synthetic.MakeResources(rnd, 5, 10, 20, new List<(uint, uint, ulong)>(), 0));
+        Check(Package.Load(upper).Entries.Count == 5, "uppercase .PACKAGE loads");
+
+        // empty package created by Package.New loads (original threw)
+        string empty = Path.Combine(dir, "empty.package");
+        Package.New(empty);
+        Check(Package.Load(empty).Entries.Count == 0, "blank package loads");
+
+        // truncated package -> clear error, and the file is not left locked
+        string trunc = Path.Combine(dir, "trunc.package");
+        Synthetic.Write(trunc, Synthetic.MakeResources(rnd, 50, 100, 200, new List<(uint, uint, ulong)>(), 0));
+        var bytes = File.ReadAllBytes(trunc);
+        File.WriteAllBytes(trunc, bytes.AsSpan(0, bytes.Length - 40).ToArray());
+        bool threw = false;
+        try { Package.Load(trunc); } catch { threw = true; }
+        Check(threw, "truncated index throws");
+        File.Delete(trunc); // would fail on Windows if the handle leaked
+        Check(!File.Exists(trunc), "file not locked after failed load");
+
+        // Merge of nothing produces one empty package that loads
+        string mdir = Path.Combine(dir, "mergeempty");
+        Package.Merge(mdir, new List<Package>());
+        Check(Package.Load(Path.Combine(mdir, "Merge1.package")).Entries.Count == 0, "empty merge");
+    }
+
+    // ---------------------------------------------------------------- conflicts + full merge vs original
+
+    sealed class Scenario
+    {
+        public string Root = "";
+        public string Mods => Path.Combine(Root, "Mods");
+        public List<string> ModNames = new();
+        public Random Rnd = new(1);
+        public List<(uint, uint, ulong)> Pool = new();
+        public int Counter;
+    }
+
+    static Scenario MakeScenario(string root, int seed, int mods, int maxPackages, int maxResources, int maxSize, double shared, bool subfolders = false)
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var sc = new Scenario { Root = root, Rnd = new Random(seed) };
+        sc.Pool = Synthetic.MakePool(sc.Rnd, Math.Max(20, mods * 4));
+        for (int m = 0; m < mods; m++)
+        {
+            string name = $"Mod {m:000} {(char)('A' + sc.Rnd.Next(26))}";
+            sc.ModNames.Add(name);
+            int pkgs = sc.Rnd.Next(1, maxPackages + 1);
+            for (int p = 0; p < pkgs; p++)
+                AddPackage(sc, name, maxResources, maxSize, shared, subfolders && sc.Rnd.Next(3) == 0);
+        }
+        // profile with random order and enabled state
+        var order = sc.ModNames.OrderBy(_ => sc.Rnd.Next()).ToList();
+        Directory.CreateDirectory(Path.Combine(root, "Profiles", "Test"));
+        File.WriteAllLines(Path.Combine(root, "Profiles", "Test", "modlist.txt"), order.Select(n => (sc.Rnd.Next(5) == 0 ? "-" : "+") + n));
+        LinuxQuirk(root, "Test");
+        return sc;
+    }
+
+    static string AddPackage(Scenario sc, string mod, int maxResources, int maxSize, double shared, bool inSubfolder = false)
+    {
+        var res = Synthetic.MakeResources(sc.Rnd, sc.Rnd.Next(1, maxResources + 1), 1, maxSize, sc.Pool, shared);
+        // some duplicate keys inside a single package
+        if (res.Count > 3 && sc.Rnd.Next(10) == 0) { res[1].Type = res[0].Type; res[1].Group = res[0].Group; res[1].Instance = res[0].Instance; }
+        string sub = inSubfolder ? Path.Combine("Sub" + sc.Rnd.Next(3), "") : "";
+        string file = Path.Combine(sc.Mods, mod, sub, $"pkg{sc.Counter++:0000}_{sc.Rnd.Next(1000)}.package");
+        Synthetic.Write(file, res, (uint)sc.Rnd.Next(8), sc.Rnd.Next(6) == 0);
+        return file;
+    }
+
+    /// <summary>
+    /// The original code builds paths like "Profiles\\Test\\modlist.txt" with literal backslashes. On Windows that's a
+    /// path; on Linux (where these tests also run) it's a single odd file name in the root. Give the original its file.
+    /// </summary>
+    public static void LinuxQuirk(string root, string profile)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string real = Path.Combine(root, "Profiles", profile, "modlist.txt");
+        if (File.Exists(real))
+            File.Copy(real, Path.Combine(root, $"Profiles\\{profile}\\modlist.txt"), true);
+    }
+
+    /// <summary>Points the original code (which only knows the program folder) at a scenario by copying it there.</summary>
+    static void StageForOriginal(Scenario sc)
+    {
+        string baseDir = AppContext.BaseDirectory;
+        foreach (string d in new[] { "Mods", "Profiles" })
+        {
+            string target = Path.Combine(baseDir, d);
+            if (Directory.Exists(target)) Directory.Delete(target, true);
+            CopyDir(Path.Combine(sc.Root, d), target);
+        }
+    }
+
+    static void CopyDir(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (string f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)));
+        foreach (string d in Directory.GetDirectories(from)) CopyDir(d, Path.Combine(to, Path.GetFileName(d)));
+    }
+
+    static void TestConflictsAndMerge(string work, int seed)
+    {
+        Console.WriteLine($"Conflicts + full merge vs original (seed {seed})");
+        var sc = MakeScenario(Path.Combine(work, $"cm{seed}"), seed, mods: 40, maxPackages: 5, maxResources: 150, maxSize: 4000, shared: 0.05);
+
+        // ---- original
+        var op = new Orig.ProfileModel(sc.Root);
+        op.Setup("Test");
+        op.CheckModModelConflicts();
+        op.CheckPackageConflicts();
+        op.CheckDetailedConflicts();
+
+        // ---- new
+        var np = new ProfileModel(sc.Root);
+        np.Setup("Test");
+        var analysis = np.Analyze(null);
+        np.ApplyAnalysis(analysis);
+
+        int modConf = 0, inModConf = 0, detail = 0;
+        foreach (var om in op.ModModels)
+        {
+            var nm = np.GetModModel(om.Name);
+            Check(om.Priority == nm.Priority && om.Enabled == nm.Enabled, $"{om.Name}: priority/enabled");
+            var a = om.ConflictingModModels.Select(m => m.Name).ToHashSet();
+            var b = nm.ConflictingModModels.Select(m => m.Name).ToHashSet();
+            Check(a.SetEquals(b), $"{om.Name}: conflicting mods {a.Count} vs {b.Count}");
+            modConf += a.Count;
+
+            foreach (var opk in om.PackageModels)
+            {
+                Check(nm.TryGetPackageModel(opk.Name, out var npk), $"package {opk.Name} exists");
+                if (npk == null) continue;
+                var c = opk.ConflictingPackageModelsInModModel.Select(p => p.Name).ToHashSet();
+                var d = npk.ConflictingPackageModelsInModModel.Select(p => p.Name).ToHashSet();
+                Check(c.SetEquals(d), $"{om.Name}/{opk.Name}: in-mod conflicts {c.Count} vs {d.Count}");
+                inModConf += c.Count;
+
+                var ro = opk.GetConflictingResources().ToHashSet();
+                var rn = npk.GetConflictingResources().ToHashSet();
+                Check(ro.SetEquals(rn), $"{om.Name}/{opk.Name}: conflicting resources {ro.Count} vs {rn.Count}");
+                foreach (string r in ro.Intersect(rn))
+                {
+                    var x = opk.GetConflictingPackageModelsByResource(r).Select(p => p.ModModel.Name + "/" + p.Name).ToHashSet();
+                    var y = npk.GetConflictingPackageModelsByResource(r).Select(p => p.ModModel.Name + "/" + p.Name).ToHashSet();
+                    Check(x.SetEquals(y), $"{opk.Name} {r}: detail");
+                    detail++;
+                }
+            }
+        }
+        Console.WriteLine($"  mod conflicts {modConf}, in-mod {inModConf}, detailed resource links {detail}");
+        Check(modConf > 0 && inModConf > 0 && detail > 0, "scenario actually has conflicts");
+
+        // ---- merge: original BuildMods order
+        var omods = op.ModModels.FindAll(m => m.Enabled);
+        omods.Sort(new Orig.ModModelComparer(Orig.ModModelComparer.SortBy.Priority));
+        var oPackages = new List<Orig.Package>();
+        foreach (var m in omods)
+        {
+            var pms = m.PackageModels;
+            pms.Sort((p1, p2) => StringLogicalComparer.Compare(p1.Name, p2.Name));
+            oPackages.AddRange(pms.Select(p => p.Package));
+        }
+        uint limit = 600_000; // small so several Merge files are produced
+        string outOrig = Path.Combine(work, $"cm{seed}_orig");
+        Orig.Package.Merge(outOrig, oPackages, limit);
+
+        var nPackages = np.GetPackagesInBuildOrder(out var unreadable);
+        Check(unreadable.Count == 0, "no unreadable packages");
+        Check(nPackages.Select(p => p.ModModel.Name + "/" + p.Name).SequenceEqual(omods.SelectMany(m => m.PackageModels.OrderBy(p => p.Name, Comparer<string>.Create(StringLogicalComparer.Compare)).Select(p => m.Name + "/" + p.Name))), "build order matches");
+
+        string outNewMerge = Path.Combine(work, $"cm{seed}_newmerge");
+        Package.Merge(outNewMerge, nPackages.Select(p => p.Package).ToList(), limit);
+
+        string outBuilder = Path.Combine(work, $"cm{seed}_builder", "ModBuilds");
+        var sources = nPackages.Select(p => BuildSource.FromFile(p.ModModel.Name + "\\" + p.Name, p.Package)).ToList();
+        var result = ModBuilder.Build(outBuilder, sources, new BuildOptions { SizeLimit = limit });
+        Check(result.Plan.FullRebuild, "first build is full");
+
+        CompareFolders(outOrig, outNewMerge, "Package.Merge");
+        CompareFolders(outOrig, outBuilder, "ModBuilder full build");
+
+        // a second plan right away must be up to date
+        var plan2 = ModBuilder.Plan(outBuilder, sources, new BuildOptions { SizeLimit = limit });
+        Check(plan2.UpToDate, "plan after build is up to date: " + plan2);
+    }
+
+    static void CompareFolders(string a, string b, string what)
+    {
+        var fa = Directory.GetFiles(a, "*.package").Select(Path.GetFileName).OrderBy(x => x).ToList();
+        var fb = Directory.GetFiles(b, "*.package").Select(Path.GetFileName).OrderBy(x => x).ToList();
+        Check(fa.SequenceEqual(fb), $"{what}: same files ({fa.Count} vs {fb.Count})");
+        int same = 0;
+        foreach (var f in fa.Intersect(fb))
+        {
+            bool eq = File.ReadAllBytes(Path.Combine(a, f!)).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(b, f!)));
+            Check(eq, $"{what}: {f} byte-identical");
+            if (eq) same++;
+        }
+        Console.WriteLine($"  {what}: {same}/{fa.Count} merged files byte-identical to the original");
+    }
+
+    // ---------------------------------------------------------------- cache
+
+    static void TestCache(string work)
+    {
+        Console.WriteLine("Package index cache");
+        var sc = MakeScenario(Path.Combine(work, "cache"), 21, mods: 15, maxPackages: 4, maxResources: 100, maxSize: 500, shared: 0.05);
+        string cacheFile = Path.Combine(sc.Root, "s3mo.cache");
+
+        var cache = new PackageCache(cacheFile, sc.Mods);
+        cache.Load();
+        var p1 = new ProfileModel(sc.Root); p1.Setup("Test");
+        var r1 = p1.Analyze(cache); p1.ApplyAnalysis(r1);
+        Check(r1.CacheHits == 0 && File.Exists(cacheFile), "first scan reads everything and writes the cache");
+
+        // new cache object (= next program start)
+        var cache2 = new PackageCache(cacheFile, sc.Mods);
+        cache2.Load();
+        var p2 = new ProfileModel(sc.Root); p2.Setup("Test");
+        var r2 = p2.Analyze(cache2); p2.ApplyAnalysis(r2);
+        Check(r2.CacheHits == r2.PackageCount, $"second start: all from cache ({r2.CacheHits}/{r2.PackageCount})");
+        Check(SameConflicts(p1, p2), "cached analysis gives same conflicts");
+
+        // change one package
+        string changed = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories)[3];
+        Synthetic.Write(changed, Synthetic.MakeResources(sc.Rnd, 7, 10, 20, sc.Pool, 0.5));
+        File.SetLastWriteTimeUtc(changed, DateTime.UtcNow.AddMinutes(1));
+        var cache3 = new PackageCache(cacheFile, sc.Mods);
+        cache3.Load();
+        var p3 = new ProfileModel(sc.Root); p3.Setup("Test");
+        var r3 = p3.Analyze(cache3);
+        Check(r3.CacheHits == r3.PackageCount - 1, $"one changed package re-read ({r3.PackageCount - r3.CacheHits} misses)");
+        var pm = p3.ModModels.SelectMany(m => m.Packages).First(p => p.FilePath == changed);
+        Check(pm.Package.Entries.Count == 7, "changed package has new content");
+
+        // corrupt cache -> ignored
+        File.WriteAllBytes(cacheFile, new byte[] { 1, 2, 3, 4, 5 });
+        var cache4 = new PackageCache(cacheFile, sc.Mods);
+        cache4.Load();
+        var p4 = new ProfileModel(sc.Root); p4.Setup("Test");
+        var r4 = p4.Analyze(cache4);
+        Check(r4.CacheHits == 0 && r4.FailedCount == 0, "corrupt cache is ignored");
+
+        // broken package -> reported, not fatal, excluded from build order
+        string broken = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories)[5];
+        File.WriteAllBytes(broken, new byte[200]);
+        var p5 = new ProfileModel(sc.Root); p5.Setup("Test");
+        var r5 = p5.Analyze(new PackageCache(cacheFile, sc.Mods));
+        Check(r5.FailedCount == 1, "broken package reported");
+        p5.ModModels.ForEach(m => m.Update(m.Name, true, m.Priority));
+        p5.GetPackagesInBuildOrder(out var unreadable);
+        Check(unreadable.Count == 1 && unreadable[0].FilePath == broken, "broken package left out of the build");
+    }
+
+    static bool SameConflicts(ProfileModel a, ProfileModel b)
+    {
+        foreach (var ma in a.ModModels)
+        {
+            var mb = b.GetModModel(ma.Name);
+            if (!ma.ConflictingModModels.Select(m => m.Name).ToHashSet().SetEquals(mb.ConflictingModModels.Select(m => m.Name))) return false;
+        }
+        return true;
+    }
+
+    // ---------------------------------------------------------------- subfolders
+
+    static void TestSubfolders(string work)
+    {
+        Console.WriteLine("Subfolders inside mods");
+        string root = Path.Combine(work, "sub");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var rnd = new Random(5);
+        var none = new List<(uint, uint, ulong)>();
+        string mod = Path.Combine(root, "Mods", "Hair Pack");
+        Synthetic.Write(Path.Combine(mod, "top.package"), Synthetic.MakeResources(rnd, 3, 10, 20, none, 0));
+        Synthetic.Write(Path.Combine(mod, "Female", "hair.package"), Synthetic.MakeResources(rnd, 4, 10, 20, none, 0));
+        Synthetic.Write(Path.Combine(mod, "Male", "hair.package"), Synthetic.MakeResources(rnd, 5, 10, 20, none, 0)); // same file name, different folder
+        Synthetic.Write(Path.Combine(mod, "Male", "Deep", "x.PACKAGE"), Synthetic.MakeResources(rnd, 2, 10, 20, none, 0));
+        File.WriteAllText(Path.Combine(mod, "Female", "readme.txt"), "hi");
+        Directory.CreateDirectory(Path.Combine(root, "Profiles", "Test"));
+        File.WriteAllLines(Path.Combine(root, "Profiles", "Test", "modlist.txt"), new[] { "+Hair Pack" });
+
+        var p = new ProfileModel(root);
+        p.Setup("Test");
+        var m = p.GetModModel("Hair Pack");
+        var names = m.GetSortedPackages().Select(x => x.Name.Replace('\\', '/')).ToList();
+        Check(names.Count == 4, $"found 4 packages ({string.Join(", ", names)})");
+        Check(names.Contains("Female/hair.package") && names.Contains("Male/hair.package") && names.Contains("Male/Deep/x.PACKAGE"), "relative names");
+        Check(m.GetOtherFiles().Select(x => x.Replace('\\', '/')).SequenceEqual(new[] { "Female/readme.txt" }), "other files listed with folder");
+        p.ApplyAnalysis(p.Analyze(null));
+        var build = p.GetPackagesInBuildOrder(out _);
+        Check(build.Count == 4, "all four go into the build");
+
+        // rename keeps relative names working
+        p.RenameMod("Hair Pack", "Hair Pack 2");
+        var m2 = p.GetModModel("Hair Pack 2");
+        Check(m2.Packages.All(x => File.Exists(x.FilePath)), "paths valid after rename");
+    }
+
+    // ---------------------------------------------------------------- incremental builds
+
+    static List<BuildSource> SourcesFor(ProfileModel p, PackageCache cache)
+    {
+        var list = new List<BuildSource>();
+        foreach (var pm in p.GetPackagesInBuildOrder(out _))
+            list.Add(BuildSource.FromFile(pm.ModModel.Name + "\\" + pm.Name, cache.GetPackage(pm.FilePath, out _)));
+        return list;
+    }
+
+    /// <summary>key -> stored bytes + flags, over all merged files; also checks there are no duplicate keys.</summary>
+    static Dictionary<ResourceKey, (byte[] data, uint mem, ushort comp, ushort unk)> Effective(string folder, out int files)
+    {
+        var map = new Dictionary<ResourceKey, (byte[], uint, ushort, ushort)>();
+        var f = Directory.GetFiles(folder, "*.package");
+        files = f.Length;
+        foreach (string file in f)
+        {
+            var pkg = Package.Load(file);
+            using var reader = pkg.OpenReader();
+            foreach (var e in pkg.Entries)
+            {
+                if (!map.TryAdd(e.Key, (reader.ReadRaw(e), e.MemSize, e.Compressed, e.Unknown2)))
+                    Check(false, $"duplicate key {e.Key} in merged output ({Path.GetFileName(file)})");
+            }
+        }
+        return map;
+    }
+
+    static bool SameContent(Dictionary<ResourceKey, (byte[] data, uint mem, ushort comp, ushort unk)> a, Dictionary<ResourceKey, (byte[] data, uint mem, ushort comp, ushort unk)> b)
+    {
+        if (a.Count != b.Count) return false;
+        foreach (var kv in a)
+        {
+            if (!b.TryGetValue(kv.Key, out var o)) return false;
+            if (o.mem != kv.Value.mem || o.comp != kv.Value.comp || o.unk != kv.Value.unk || !o.data.AsSpan().SequenceEqual(kv.Value.data)) return false;
+        }
+        return true;
+    }
+
+    static void TestIncremental(string work, int seed, double compactThreshold)
+    {
+        Console.WriteLine($"Incremental builds (seed {seed}, compact at {compactThreshold:P0})");
+        var sc = MakeScenario(Path.Combine(work, $"inc{seed}"), seed, mods: 25, maxPackages: 4, maxResources: 120, maxSize: 3000, shared: 0.08, subfolders: true);
+        string build = Path.Combine(sc.Root, "Sims3Mods", "ModBuilds");
+        string reference = Path.Combine(sc.Root, "Reference", "ModBuilds");
+        var cache = new PackageCache(Path.Combine(sc.Root, "s3mo.cache"), sc.Mods);
+        var opts = new BuildOptions { SizeLimit = 400_000, CompactThreshold = compactThreshold };
+
+        var p = new ProfileModel(sc.Root); p.Setup("Test");
+        ModBuilder.Build(build, SourcesFor(p, cache), opts);
+
+        int incremental = 0, full = 0;
+        long incBytes = 0;
+        var rnd = new Random(seed * 31);
+
+        for (int step = 0; step < 40; step++)
+        {
+            string action;
+            var mods = p.ModModels;
+            int k = rnd.Next(7);
+            switch (k)
+            {
+                case 0: // add a package to a mod
+                {
+                    var m = mods[rnd.Next(mods.Count)];
+                    AddPackage(sc, m.Name, 80, 3000, 0.1, rnd.Next(2) == 0);
+                    action = "add package to " + m.Name;
+                    break;
+                }
+                case 1: // delete a package
+                {
+                    var all = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories);
+                    string f = all[rnd.Next(all.Length)];
+                    File.Delete(f);
+                    action = "delete " + Path.GetFileName(f);
+                    break;
+                }
+                case 2: // change a package's content
+                {
+                    var all = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories);
+                    string f = all[rnd.Next(all.Length)];
+                    Synthetic.Write(f, Synthetic.MakeResources(sc.Rnd, rnd.Next(1, 60), 1, 2000, sc.Pool, 0.2));
+                    File.SetLastWriteTimeUtc(f, DateTime.UtcNow.AddSeconds(step + 1));
+                    action = "modify " + Path.GetFileName(f);
+                    break;
+                }
+                case 3: // toggle a mod
+                {
+                    var m = mods[rnd.Next(mods.Count)];
+                    m.Update(m.Name, !m.Enabled, m.Priority);
+                    p.Save("Test");
+                    action = (m.Enabled ? "enable " : "disable ") + m.Name;
+                    break;
+                }
+                case 4: // move a mod in the load order
+                {
+                    var ordered = mods.OrderBy(m => m.Priority).ToList();
+                    var m = ordered[rnd.Next(ordered.Count)];
+                    ordered.Remove(m);
+                    ordered.Insert(rnd.Next(ordered.Count + 1), m);
+                    for (int i = 0; i < ordered.Count; i++) ordered[i].Update(ordered[i].Name, ordered[i].Enabled, i);
+                    p.Save("Test");
+                    action = "reorder " + m.Name;
+                    break;
+                }
+                case 5: // new mod
+                {
+                    string name = $"New {step}";
+                    AddPackage(sc, name, 100, 3000, 0.15);
+                    var lines = File.ReadAllLines(Path.Combine(sc.Root, "Profiles", "Test", "modlist.txt")).ToList();
+                    lines.Add("+" + name);
+                    File.WriteAllLines(Path.Combine(sc.Root, "Profiles", "Test", "modlist.txt"), lines);
+                    action = "new mod " + name;
+                    break;
+                }
+                default: // nothing changed
+                    action = "no change";
+                    break;
+            }
+
+            // reload models the way the app does on Refresh
+            p = new ProfileModel(sc.Root); p.Setup("Test");
+            var sources = SourcesFor(p, cache);
+
+            var plan = ModBuilder.Plan(build, sources, opts);
+            if (k == 6) Check(plan.UpToDate, "no change -> up to date");
+            var res = ModBuilder.Build(build, sources, opts);
+            if (res.Plan.FullRebuild) full++; else if (!res.Plan.UpToDate) { incremental++; incBytes += res.BytesWritten; }
+            if (Verbose) Console.WriteLine($"  step {step}: {action} -> {res.Plan}");
+
+            // compare with a from-scratch build
+            if (Directory.Exists(Path.GetDirectoryName(reference)!)) Directory.Delete(Path.GetDirectoryName(reference)!, true);
+            ModBuilder.Build(reference, sources, new BuildOptions { SizeLimit = opts.SizeLimit, ForceFullRebuild = true });
+            var a = Effective(build, out int filesA);
+            var b = Effective(reference, out _);
+            Check(SameContent(a, b), $"step {step} ({action}): incremental build content == full build content ({a.Count} vs {b.Count} resources)");
+
+            var again = ModBuilder.Plan(build, sources, opts);
+            Check(again.UpToDate, $"step {step}: up to date right after building ({again})");
+        }
+        long totalSize = Directory.GetFiles(build, "*.package").Sum(f => new FileInfo(f).Length);
+        Console.WriteLine($"  40 steps: {incremental} incremental, {full} full rebuilds; incremental builds wrote {incBytes / 1024} KB in total (build size {totalSize / 1024} KB)");
+    }
+
+    static void TestTamperDetection(string work)
+    {
+        Console.WriteLine("Build state safety checks");
+        var sc = MakeScenario(Path.Combine(work, "tamper"), 77, mods: 6, maxPackages: 2, maxResources: 30, maxSize: 500, shared: 0.1);
+        string build = Path.Combine(sc.Root, "S", "ModBuilds");
+        var cache = new PackageCache(Path.Combine(sc.Root, "c"), sc.Mods);
+        var p = new ProfileModel(sc.Root); p.Setup("Test");
+        var sources = SourcesFor(p, cache);
+        ModBuilder.Build(build, sources, null);
+
+        // stray package in ModBuilds
+        File.WriteAllBytes(Path.Combine(build, "Other.package"), new byte[10]);
+        var plan = ModBuilder.Plan(build, sources, null);
+        Check(plan.FullRebuild && plan.Reason!.Contains("unexpected"), "stray file forces full rebuild: " + plan.Reason);
+        ModBuilder.Build(build, sources, null);
+        Check(!File.Exists(Path.Combine(build, "Other.package")), "stray file removed by full rebuild");
+
+        // merged file modified
+        string m1 = Path.Combine(build, "Merge1.package");
+        File.SetLastWriteTimeUtc(m1, DateTime.UtcNow.AddDays(-1));
+        plan = ModBuilder.Plan(build, sources, null);
+        Check(plan.FullRebuild && plan.Reason!.Contains("changed outside"), "modified merge file forces full rebuild: " + plan.Reason);
+        ModBuilder.Build(build, sources, null);
+
+        // old-version build (Merge.bin, no state)
+        File.Delete(Path.Combine(build, ModBuilder.StateFileName));
+        File.WriteAllBytes(Path.Combine(build, "Merge.bin"), new byte[17]);
+        plan = ModBuilder.Plan(build, sources, null);
+        Check(plan.FullRebuild && plan.Reason!.Contains("older"), "old build detected: " + plan.Reason);
+        ModBuilder.Build(build, sources, null);
+        Check(!File.Exists(Path.Combine(build, "Merge.bin")) && File.Exists(Path.Combine(build, ModBuilder.StateFileName)), "old build replaced");
+
+        // simulated crash during an incremental build: data appended but header not updated
+        AddPackage(sc, sc.ModNames[0], 20, 300, 0);
+        p = new ProfileModel(sc.Root); p.Setup("Test");
+        p.ModModels.ForEach(m => m.Update(m.Name, true, m.Priority));
+        sources = SourcesFor(p, cache);
+        string last = Directory.GetFiles(build, "*.package").OrderBy(x => x).Last();
+        var before = Effective(build, out _);
+        using (var fs = new FileStream(last, FileMode.Append)) fs.Write(new byte[5000]);
+        var stillValid = Effective(build, out _);
+        Check(SameContent(before, stillValid), "appended bytes don't affect the existing build");
+        plan = ModBuilder.Plan(build, sources, null);
+        Check(plan.FullRebuild, "interrupted build detected -> full rebuild");
+    }
+}

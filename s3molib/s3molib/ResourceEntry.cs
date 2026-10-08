@@ -47,6 +47,7 @@ namespace s3molib
         public uint MemSize { get; private set; }
         public ushort Compressed { get; private set; }
         public ushort Unknown2 { get; private set; }
+        public ResourceKey Key { get; private set; }
         public byte[] Data => (_data != null) ? _data : _data = Package.GetUncompressedData(this);
         private byte[] _data = null;
 
@@ -63,12 +64,10 @@ namespace s3molib
             MemSize = memSize;
             Compressed = compressed;
             Unknown2 = unknown2;
+            Key = new ResourceKey(type, group, Instance);
         }
 
-        public override string ToString()
-        {
-            return $"{Helper.UInt32ToHexString(Type)}-{Helper.UInt32ToHexString(Group)}-{Helper.UInt64ToHexString(Instance)}";
-        }
+        public override string ToString() => Key.ToString();
 
         public string Decode()
         {

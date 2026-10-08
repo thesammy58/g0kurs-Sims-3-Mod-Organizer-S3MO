@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -15,75 +15,99 @@ namespace s3molib
 
         public List<PackageModel> PackageModels => new List<PackageModel>(_packageModelLookup.Values);
 
+        /// <summary>The packages without copying (don't modify while iterating).</summary>
+        public IReadOnlyCollection<PackageModel> Packages => _packageModelLookup.Values;
+
         public bool TryGetPackageModel(string name, out PackageModel packageModel) => _packageModelLookup.TryGetValue(name, out packageModel);
-        private Dictionary<string, PackageModel> _packageModelLookup = new Dictionary<string, PackageModel>();
+        private Dictionary<string, PackageModel> _packageModelLookup = new Dictionary<string, PackageModel>(StringComparer.OrdinalIgnoreCase);
 
         public List<ModModel> ConflictingModModels => new List<ModModel>(_conflictingModModels);
+        public IReadOnlyCollection<ModModel> ConflictingMods => _conflictingModModels;
         private HashSet<ModModel> _conflictingModModels = new HashSet<ModModel>();
+
+        internal void SetConflicts(HashSet<ModModel> conflicts) => _conflictingModModels = conflicts ?? new HashSet<ModModel>();
+
+        public bool HasPackageConflictsInside
+        {
+            get
+            {
+                foreach (PackageModel p in _packageModelLookup.Values)
+                    if (p.HasConflictsInModModel)
+                        return true;
+                return false;
+            }
+        }
 
         public ModModel(string path)
         {
             FolderPath = path;
             Name = Path.GetFileName(path);
 
-            string[] files = Directory.GetFiles(path, "*.package");
-
-            foreach (string filePath in files)
+            // Packages may live in subfolders of the mod folder; they're identified by their path relative to the mod folder.
+            foreach (string filePath in EnumeratePackages(path))
             {
-                PackageModel packageModel = new PackageModel(this, filePath);
-                _packageModelLookup.Add(packageModel.Name, packageModel);
+                string relative = Path.GetRelativePath(path, filePath);
+                PackageModel packageModel = new PackageModel(this, filePath, relative);
+                _packageModelLookup[relative] = packageModel;
             }
+        }
+
+        /// <summary>All .package files in the folder and its subfolders (case-insensitive, hidden folders skipped).</summary>
+        public static IEnumerable<string> EnumeratePackages(string folder)
+        {
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                MatchCasing = MatchCasing.CaseInsensitive,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
+            };
+            return Directory.EnumerateFiles(folder, "*.package", options);
+        }
+
+        /// <summary>Non-package files in the mod folder and subfolders, relative to the mod folder.</summary>
+        public List<string> GetOtherFiles()
+        {
+            var result = new List<string>();
+            if (!Directory.Exists(FolderPath))
+                return result;
+
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
+            };
+            foreach (string f in Directory.EnumerateFiles(FolderPath, "*", options))
+                if (!f.EndsWith(".package", StringComparison.OrdinalIgnoreCase))
+                    result.Add(Path.GetRelativePath(FolderPath, f));
+            result.Sort(StringLogicalComparer.Compare);
+            return result;
+        }
+
+        /// <summary>Packages sorted the way they are merged (and listed).</summary>
+        public List<PackageModel> GetSortedPackages()
+        {
+            List<PackageModel> list = PackageModels;
+            list.Sort(PackageModel.CompareByName);
+            return list;
         }
 
         public void Update(string name, bool enabled, int priority)
         {
             if (!Name.Equals(name))
             {
-                FolderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Mods\\{name}");
+                string modsFolder = Path.GetDirectoryName(FolderPath);
+                FolderPath = Path.Combine(modsFolder, name);
 
                 foreach (PackageModel packageModel in _packageModelLookup.Values)
-                    packageModel.Update(Path.Combine(FolderPath, $"{packageModel.Name}"));
+                    packageModel.Update(Path.Combine(FolderPath, packageModel.Name));
             }
 
             Name = name;
             Enabled = enabled;
             Priority = priority;
         }
-
-        public static void FastCheckConflict(ProfileModel profileModel)
-        {
-            List<ModModel> modModels = profileModel.ModModels;
-            modModels.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
-
-            for (int i = 0; i < modModels.Count - 1; i++)
-            {
-                ModModel modModel = modModels[i];
-
-                for (int j = i + 1; j < modModels.Count; j++)
-                {
-                    ModModel otherModModel = modModels[j];
-
-                    if (PackageModel.FastCheckConflict(modModel, otherModModel))
-                    {
-                        modModel._conflictingModModels.Add(otherModModel);
-                        otherModModel._conflictingModModels.Add(modModel);
-                        continue;
-                    }
-                }
-            }
-        }
-
-        public void CheckConflicts(ModModel otherModModel)
-        {
-            foreach (PackageModel packageModel in this._packageModelLookup.Values)
-            {
-                foreach (PackageModel otherPackageModel in otherModModel._packageModelLookup.Values)
-                {
-                    packageModel.CheckConflicts(otherPackageModel);
-                }
-            }
-        }
-
     }
 
     public class ModModelComparer : IComparer<ModModel>

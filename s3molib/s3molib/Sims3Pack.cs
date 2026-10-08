@@ -13,8 +13,8 @@ namespace s3molib
             if (!File.Exists(path))
                 throw new Exception($"Sims3Pack file does not exists at {path}");
 
-            FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read);
-            BinaryReader r = new BinaryReader(stream);
+            using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using BinaryReader r = new BinaryReader(stream);
 
             stream.Position = 4;
             string Magic = new String(r.ReadChars(7));
@@ -58,10 +58,15 @@ namespace s3molib
 
             foreach (PackagedFile packagedFile in packagedFiles)
             {
-                Logger.Log($"Unpacking {Path.GetFileName(path)}: {packagedFile.Name}");
+                // Only ever write a plain file name into the target folder (a crafted name like "..\x" must not escape it).
+                string fileName = Path.GetFileName(packagedFile.Name?.Replace('\\', '/') ?? string.Empty);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    continue;
+
+                Logger.Log($"Unpacking {Path.GetFileName(path)}: {fileName}");
                 stream.Position = xmlOffset + packagedFile.Offset;
                 byte[] packageData = r.ReadBytes((int)packagedFile.Length);
-                File.WriteAllBytes(Path.Combine(targetDirectoryPath, packagedFile.Name), packageData);
+                File.WriteAllBytes(Path.Combine(targetDirectoryPath, fileName), packageData);
             }
 
             return true;
