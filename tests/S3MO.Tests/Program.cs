@@ -32,6 +32,17 @@ public static class Program
                 case "test":
                     RunAllTests();
                     break;
+                case "soak":
+                {
+                    // many more random incremental sequences (slow)
+                    string work = Path.Combine(AppContext.BaseDirectory, "soakwork");
+                    if (Directory.Exists(work)) Directory.Delete(work, true);
+                    Directory.CreateDirectory(work);
+                    int n = args.Length > 1 ? int.Parse(args[1]) : 20;
+                    for (int seed = 100; seed < 100 + n; seed++)
+                        TestIncremental(work, seed, compactThreshold: (seed % 3) switch { 0 => 1.0, 1 => 0.35, _ => 0.1 });
+                    break;
+                }
                 case "bench":
                     Benchmark.Run(args.Length > 1 ? int.Parse(args[1]) : 1200);
                     break;
