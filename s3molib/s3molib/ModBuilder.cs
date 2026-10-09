@@ -40,7 +40,10 @@ namespace s3molib
         public bool ForceFullRebuild { get; set; }
 
         /// <summary>When more than this fraction of ModBuilds would be unused space, rebuild from scratch instead of patching.</summary>
-        public double CompactThreshold { get; set; } = 0.25;
+        public double CompactThreshold { get; set; } = 0.35;
+
+        /// <summary>...but only once the unused space is at least this many bytes (small builds are cheap to keep patching).</summary>
+        public long CompactMinBytes { get; set; } = 64L << 20;
 
         /// <summary>Optional progress callback (called on the building thread).</summary>
         public Action<BuildProgress> Progress { get; set; }
@@ -155,6 +158,17 @@ namespace s3molib
             for (int f = 0; f < keptByFile.Length; f++)
                 keptByFile[f] = new List<BuildState.Entry>();
 
+            // Which current source (if any) is the same, unchanged file as each source of the previous build.
+            var currentById = new Dictionary<string, int>(sources.Count, StringComparer.OrdinalIgnoreCase);
+            for (int s = 0; s < sources.Count; s++)
+                currentById[sources[s].Id] = s;
+            int[] sameSource = new int[state.Sources.Count];
+            for (int s = 0; s < state.Sources.Count; s++)
+            {
+                BuildState.SourceRecord old = state.Sources[s];
+                sameSource[s] = currentById.TryGetValue(old.Id, out int c) && sources[c].Size == old.Size && sources[c].LastWriteTicks == old.LastWriteTicks ? c : -1;
+            }
+
             foreach (BuildState.Entry se in state.Entries)
             {
                 if (!desired.TryGetValue(se.Key, out int di))
@@ -165,10 +179,8 @@ namespace s3molib
                 }
 
                 Desired d = order[di];
-                BuildSource cur = sources[d.Source];
-                BuildState.SourceRecord old = state.Sources[se.Source];
 
-                if (!keep[di] && string.Equals(old.Id, cur.Id, StringComparison.OrdinalIgnoreCase) && old.Size == cur.Size && old.LastWriteTicks == cur.LastWriteTicks)
+                if (!keep[di] && sameSource[se.Source] == d.Source)
                 {
                     keep[di] = true;
                     plan.Unchanged++;
@@ -216,7 +228,7 @@ namespace s3molib
 
             if (plan.Unchanged == 0)
                 return Full(plan, "nothing from the previous build can be kept", totalBytes);
-            if (total > 0 && (double)dead / total > options.CompactThreshold)
+            if (total > 0 && (double)dead / total > options.CompactThreshold && dead >= options.CompactMinBytes)
                 return Full(plan, $"compacting, {100.0 * dead / total:0}% of ModBuilds is unused space", totalBytes);
             if (state.Files[last].Length > MaxPackageSize)
                 return Full(plan, "the last merged package is too large to extend", totalBytes);

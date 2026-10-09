@@ -498,7 +498,7 @@ public static class Program
         string build = Path.Combine(sc.Root, "Sims3Mods", "ModBuilds");
         string reference = Path.Combine(sc.Root, "Reference", "ModBuilds");
         var cache = new PackageCache(Path.Combine(sc.Root, "s3mo.cache"), sc.Mods);
-        var opts = new BuildOptions { SizeLimit = 400_000, CompactThreshold = compactThreshold };
+        var opts = new BuildOptions { SizeLimit = 400_000, CompactThreshold = compactThreshold, CompactMinBytes = 0 };
 
         var p = new ProfileModel(sc.Root); p.Setup("Test");
         ModBuilder.Build(build, SourcesFor(p, cache), opts);

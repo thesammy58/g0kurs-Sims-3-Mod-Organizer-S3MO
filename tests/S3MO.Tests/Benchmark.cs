@@ -141,7 +141,6 @@ public static class Benchmark
                 var without = sources.Take(sources.Count - 1).ToList();
                 ModBuilder.Build(outB, without, new BuildOptions { ForceFullRebuild = true });
                 sw.Restart();
-                var plan = ModBuilder.Plan(outB, sources, new BuildOptions());
                 var inc = ModBuilder.Build(outB, sources, new BuildOptions());
                 double incTime = sw.Elapsed.TotalSeconds;
                 Console.WriteLine($"  {inc.Plan}");
