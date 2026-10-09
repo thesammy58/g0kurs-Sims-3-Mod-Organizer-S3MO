@@ -12,6 +12,7 @@ namespace s3mo
     {
         private bool _isBuilding;
         private int _validateGeneration;
+        private Task _validationTask = Task.CompletedTask;
         private volatile BuildProgress? _buildProgress;
 
         private void SetupBuildButtonMenu()
@@ -88,7 +89,9 @@ namespace s3mo
             BuildPlan plan;
             try
             {
-                plan = await Task.Run(() => ModBuilder.Plan(buildFolder, MakeSources(list, null), new BuildOptions { SizeLimit = limit }));
+                Task<BuildPlan> planning = Task.Run(() => ModBuilder.Plan(buildFolder, MakeSources(list, null), new BuildOptions { SizeLimit = limit }));
+                _validationTask = planning;
+                plan = await planning;
             }
             catch (Exception ex)
             {
@@ -123,10 +126,12 @@ namespace s3mo
             if (!TryGetBuildFolders(true, out string sims3ModsFolderPath, out string buildFolder))
                 return;
 
-            await WaitForAnalysisAsync();
-
-            _isBuilding = true;
+            _isBuilding = true; // also keeps new "needs rebuild" checks from starting
             this.Enabled = false;
+            await WaitForAnalysisAsync();
+            // A "needs rebuild" check may still be reading ModBuilds; let it finish before files are replaced.
+            try { await _validationTask; } catch { }
+
             Stopwatch stopwatch = Stopwatch.StartNew();
             Logger.Log(forceFull ? "Full rebuild started" : "Build started");
 

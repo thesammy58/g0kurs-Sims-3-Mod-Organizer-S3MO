@@ -136,7 +136,7 @@ namespace s3molib
 
                 try
                 {
-                    using (FileStream fs = new FileStream(_cacheFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20))
+                    using (FileStream fs = new FileStream(_cacheFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20))
                     using (BinaryReader r = new BinaryReader(fs, Encoding.UTF8))
                     {
                         if (r.ReadString() != FileMagic || r.ReadInt32() != FileVersion)

@@ -701,7 +701,7 @@ namespace s3molib
             BuildState state = new BuildState();
             try
             {
-                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20))
+                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20))
                 using (BinaryReader r = new BinaryReader(fs, Encoding.UTF8))
                 {
                     if (r.ReadString() != Magic || r.ReadInt32() != Version)
@@ -767,7 +767,7 @@ namespace s3molib
                 }
                 try
                 {
-                    using (FileStream fs = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (FileStream fs = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                         fs.ReadExactly(header);
                     uint indexPosition = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(64));
                     uint indexCount = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(36));

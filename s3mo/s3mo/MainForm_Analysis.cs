@@ -9,13 +9,16 @@ namespace s3mo
     {
         private int _analysisGeneration;
         private Task _analysisTask = Task.CompletedTask;
+        private bool _scanning;
 
-        private bool IsAnalyzing => !_analysisTask.IsCompleted;
+        /// <summary>True until the newest scan's results are on the models.</summary>
+        private bool IsAnalyzing => _scanning;
 
         private void StartAnalysis()
         {
             int generation = ++_analysisGeneration;
             Task previous = _analysisTask;
+            _scanning = true;
             refreshButton.Enabled = false;
             _analysisTask = RunAnalysisAsync(generation, _profileModel, previous);
         }
@@ -39,6 +42,7 @@ namespace s3mo
                 Logger.LogError("Scanning packages failed: " + ex.Message);
                 if (generation == _analysisGeneration)
                 {
+                    _scanning = false;
                     refreshButton.Enabled = true;
                     HideStatus();
                 }
@@ -49,6 +53,7 @@ namespace s3mo
                 return;
 
             model.ApplyAnalysis(result);
+            _scanning = false;
             refreshButton.Enabled = true;
             HideStatus();
             modListView.Invalidate();
@@ -67,7 +72,12 @@ namespace s3mo
             if (!IsAnalyzing)
                 return;
             Logger.Log("Waiting for the package scan to finish...");
-            try { await _analysisTask; } catch { }
+            while (IsAnalyzing)
+            {
+                try { await _analysisTask; } catch { }
+                if (IsAnalyzing)
+                    await Task.Delay(50); // a newer scan was queued while waiting
+            }
         }
 
         private void ShowStatus(string text)

@@ -13,7 +13,11 @@ namespace s3mo
     {
         #region modListView
 
-        private void modListView_DragDrop(object sender, DragEventArgs e) => UpdateModModelPriority();
+        private void modListView_DragDrop(object sender, DragEventArgs e)
+        {
+            UpdateModModelPriority();
+            RefreshSelectedModHighlight();
+        }
 
         private void modListView_ItemChecked(object sender, ItemCheckedEventArgs e)
         {
