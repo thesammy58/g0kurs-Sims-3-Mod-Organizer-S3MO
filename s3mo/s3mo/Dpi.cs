@@ -4,6 +4,19 @@ using System.Windows.Forms.VisualStyles;
 namespace s3mo
 {
     /// <summary>
+    /// List icons, loaded once. (Every Properties.Resources access creates a new Bitmap, so reading them in a paint
+    /// handler allocated a bitmap per row per repaint.)
+    /// </summary>
+    internal static class Icons
+    {
+        public static readonly Image ErrorMinus = Properties.Resources.error_minus;
+        public static readonly Image ErrorPlus = Properties.Resources.error_plus;
+        public static readonly Image ErrorPlusMinus = Properties.Resources.error_plusminus;
+        public static readonly Image PackageMinus = Properties.Resources.package_minus;
+        public static readonly Image Warning = Properties.Resources.icons8_general_warning_sign_32;
+    }
+
+    /// <summary>
     /// Helpers for drawing and layout that follow the window's DPI.
     /// All hard-coded pixel values in the owner-drawn lists go through here, as "96-DPI pixels".
     /// </summary>
@@ -11,7 +24,7 @@ namespace s3mo
     {
         private static readonly Dictionary<(Image, int), Bitmap> _iconCache = new();
 
-        /// <summary>The image resized to size×size device pixels (cached; don't dispose the result).</summary>
+        /// <summary>The image resized to size×size device pixels (cached per image instance - pass long-lived images such as <see cref="Icons"/>; don't dispose the result).</summary>
         public static Image Icon(Image source, int size)
         {
             if (source.Width == size && source.Height == size)

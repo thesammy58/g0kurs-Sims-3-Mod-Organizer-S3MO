@@ -16,7 +16,7 @@ namespace s3mo
     // at high DPI. Now the painted box is also the click target, and the native control's own toggling is blocked.
     public class ModListView : ListView
     {
-        private const int WM_KEYDOWN = 0x0100, WM_CHAR = 0x0102, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONDBLCLK = 0x0203;
+        private const int WM_KEYDOWN = 0x0100, WM_CHAR = 0x0102, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202, WM_LBUTTONDBLCLK = 0x0203;
 
         private int _nativeInputDepth;
         private int _allowCheckDepth;
@@ -44,7 +44,7 @@ namespace s3mo
 
         protected override void WndProc(ref Message m)
         {
-            bool input = m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONDBLCLK || m.Msg == WM_KEYDOWN || m.Msg == WM_CHAR;
+            bool input = m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONUP || m.Msg == WM_LBUTTONDBLCLK || m.Msg == WM_KEYDOWN || m.Msg == WM_CHAR;
             if (input) _nativeInputDepth++;
             try { base.WndProc(ref m); }
             finally { if (input) _nativeInputDepth--; }

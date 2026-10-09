@@ -187,7 +187,7 @@ namespace s3mo
                 // Packages inside this mod overwrite each other
                 if (modModel.HasPackageConflictsInside)
                 {
-                    e.Graphics.DrawImage(Dpi.Icon(Properties.Resources.package_minus, size), x, y);
+                    e.Graphics.DrawImage(Dpi.Icon(Icons.PackageMinus, size), x, y);
                     x += size + gap;
                 }
 
@@ -203,9 +203,9 @@ namespace s3mo
                 if (lower == 0 && higher == 0)
                     return;
 
-                Image icon = lower > 0 && higher > 0 ? Properties.Resources.error_plusminus   // wins some, loses some
-                           : lower > 0 ? Properties.Resources.error_plus                      // overwrites lower mods
-                           : Properties.Resources.error_minus;                                // overwritten by higher mods
+                Image icon = lower > 0 && higher > 0 ? Icons.ErrorPlusMinus   // wins some, loses some
+                           : lower > 0 ? Icons.ErrorPlus                      // overwrites lower mods
+                           : Icons.ErrorMinus;                                // overwritten by higher mods
                 e.Graphics.DrawImage(Dpi.Icon(icon, size), x, y);
             }
         }

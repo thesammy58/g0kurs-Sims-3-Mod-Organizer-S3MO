@@ -79,6 +79,7 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
   - Truncated packages give a clear error.
   - Packages whose index shares the low half of the instance ID are now read correctly (index flag `0x08`).
   - The package viewer reads a package through one open file instead of reopening it for every resource.
+- List icons are loaded once instead of creating a new bitmap for every row on every repaint.
 - **Mod icon:** the mod list now shows the "packages inside this mod overwrite each other" icon even when the mod has no conflicts with other mods.
 - **Robustness:**
   - Empty lines in `modlist.txt`, renaming a mod to a name that already exists, and deleting a mod that's in use no longer crash.

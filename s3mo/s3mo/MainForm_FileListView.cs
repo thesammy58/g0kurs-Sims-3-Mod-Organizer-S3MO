@@ -82,7 +82,7 @@ namespace s3mo
 
                 if (packageModel.LoadError != null)
                 {
-                    e.Graphics.DrawImage(Dpi.Icon(Properties.Resources.icons8_general_warning_sign_32, size), x, y);
+                    e.Graphics.DrawImage(Dpi.Icon(Icons.Warning, size), x, y);
                     return;
                 }
 
@@ -95,9 +95,9 @@ namespace s3mo
                 bool beforeSome = conflictingPackageModels.Any(p => StringLogicalComparer.Compare(packageModel.Name, p.Name) < 0);
                 bool afterSome = conflictingPackageModels.Any(p => StringLogicalComparer.Compare(packageModel.Name, p.Name) > 0);
 
-                Image icon = beforeSome && afterSome ? Properties.Resources.error_plusminus
-                           : afterSome ? Properties.Resources.error_plus
-                           : Properties.Resources.error_minus;
+                Image icon = beforeSome && afterSome ? Icons.ErrorPlusMinus
+                           : afterSome ? Icons.ErrorPlus
+                           : Icons.ErrorMinus;
                 e.Graphics.DrawImage(Dpi.Icon(icon, size), x, y);
             }
         }
