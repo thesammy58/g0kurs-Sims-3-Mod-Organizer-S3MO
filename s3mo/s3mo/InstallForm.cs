@@ -24,19 +24,24 @@ namespace s3mo
         {
             string tempPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "temp");
 
-            string[] filePaths = Directory.GetFiles(tempPath);
+            // Include files in subfolders (from zips); they keep their folder inside the mod.
+            string[] filePaths = Directory.Exists(tempPath)
+                ? Directory.GetFiles(tempPath, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.System })
+                : Array.Empty<string>();
 
             if (filePaths.Length == 0)
             {
                 MessageBox.Show("No file to be installed.");
-                this.Close();
+                BeginInvoke(Close);
+                return;
             }
 
+            Array.Sort(filePaths, StringComparer.OrdinalIgnoreCase);
             foreach (string path in filePaths)
             {
-                string fileName = Path.GetFileName(path);
-                fileListBox.Items.Add(fileName, true);
-                _filePathLookup.Add(fileName, path);
+                string relative = Path.GetRelativePath(tempPath, path);
+                fileListBox.Items.Add(relative, true);
+                _filePathLookup[relative] = path;
             }
         }
 
@@ -76,10 +81,11 @@ namespace s3mo
                 if (!fileListBox.GetItemChecked(i))
                     continue;
 
-                string filePath = _filePathLookup[fileListBox.Items[i].ToString()!];
-                string fileName = Path.GetFileName(filePath);
+                string relative = fileListBox.Items[i].ToString()!;
+                string filePath = _filePathLookup[relative];
 
-                string destinationPath = Path.Combine(folderPath, fileName);
+                string destinationPath = Path.Combine(folderPath, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
 
                 File.Move(filePath, destinationPath, true);
             }
@@ -90,7 +96,9 @@ namespace s3mo
 
         private void cancelButton_Click(object sender, EventArgs e)
         {
-            Directory.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "temp"), true);
+            string temp = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "temp");
+            if (Directory.Exists(temp))
+                Directory.Delete(temp, true);
             this.Close();
         }
 

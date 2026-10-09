@@ -48,19 +48,28 @@ namespace s3molib
         private string KeyFor(string fullPath) => Path.GetRelativePath(_rootFolder, Path.GetFullPath(fullPath));
 
         /// <summary>Returns the package index for the file, from the cache when the file is unchanged.</summary>
-        public Package GetPackage(string fullPath, out bool fromCache)
+        public Package GetPackage(string fullPath, out bool fromCache) => GetPackage(fullPath, out fromCache, out _, out _);
+
+        /// <summary>The package as a build source, re-reading its index if the file changed since it was scanned.</summary>
+        public BuildSource GetBuildSource(string fullPath, string id)
+        {
+            Package p = GetPackage(fullPath, out _, out long size, out long ticks);
+            return new BuildSource(id, p, size, ticks);
+        }
+
+        private Package GetPackage(string fullPath, out bool fromCache, out long size, out long ticks)
         {
             FileInfo info = new FileInfo(fullPath);
             if (!info.Exists)
                 throw new FileNotFoundException($"File does not exists - {fullPath}", fullPath);
 
-            long size = info.Length;
-            long ticks = info.LastWriteTimeUtc.Ticks;
+            size = info.Length;
+            ticks = info.LastWriteTimeUtc.Ticks;
             string key = KeyFor(fullPath);
 
             lock (_lock)
             {
-                if (_records.TryGetValue(key, out Record r) && r.Size == size && r.LastWriteTicks == ticks)
+                if (_records.TryGetValue(key, out Record r) && r.Size == info.Length && r.LastWriteTicks == info.LastWriteTimeUtc.Ticks)
                 {
                     r.Used = true;
                     if (r.Package == null || !string.Equals(r.Package.FilePath, fullPath, StringComparison.OrdinalIgnoreCase))
@@ -91,8 +100,8 @@ namespace s3molib
             {
                 _records[key] = new Record
                 {
-                    Size = size,
-                    LastWriteTicks = ticks,
+                    Size = info.Length,
+                    LastWriteTicks = info.LastWriteTimeUtc.Ticks,
                     IndexCount = package.IndexCount,
                     IndexLength = package.IndexLength,
                     IndexPosition = package.IndexPosition,

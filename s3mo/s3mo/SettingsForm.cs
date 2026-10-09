@@ -47,7 +47,8 @@ namespace s3mo
         {
             if (Settings.TryGetSettings("SettingsX", out string obj) && int.TryParse(obj, out int i))
                 if (Settings.TryGetSettings("SettingsY", out string obj2) && int.TryParse(obj2, out int j))
-                    Location = new Point(i, j);
+                    if (Screen.AllScreens.Any(sc => sc.WorkingArea.Contains(i + 40, j + 10))) // only if that spot is still on a screen
+                        Location = new Point(i, j);
             if (Settings.TryGetSettings("GameExecutablePath", out obj))
                 gamePathTextBox.Text = obj;
             if (Settings.TryGetSettings("DocumentsFolderPath", out obj))

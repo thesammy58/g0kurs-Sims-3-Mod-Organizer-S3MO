@@ -61,9 +61,6 @@
             this.modListViewNonSelectedContextMenuStrip = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.modListViewNonSelectedToolStripMenuItemCreateEmptyMod = new System.Windows.Forms.ToolStripMenuItem();
             this.buildButton = new System.Windows.Forms.Button();
-            this.checkConflictBetweenModModelBackgroundWorker = new System.ComponentModel.BackgroundWorker();
-            this.checkConflictInModModelBackgroundWorker = new System.ComponentModel.BackgroundWorker();
-            this.checkDetailedConflictBetweenModModelBackgroundWorker = new System.ComponentModel.BackgroundWorker();
             this.installButton = new System.Windows.Forms.Button();
             this.optionsButton = new System.Windows.Forms.Button();
             this.clearCacheButton = new System.Windows.Forms.Button();
@@ -76,10 +73,8 @@
             this.openGameFolderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.openGameDocumentsFolderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.openS3MOFolderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.validateBackgroundWorker = new System.ComponentModel.BackgroundWorker();
             this.progressBar = new System.Windows.Forms.ProgressBar();
             this.progressLabel = new System.Windows.Forms.Label();
-            this.md5BackgroundWorker = new System.ComponentModel.BackgroundWorker();
             ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit();
             this.splitContainer1.Panel1.SuspendLayout();
             this.splitContainer1.Panel2.SuspendLayout();
@@ -432,24 +427,6 @@
             this.buildButton.UseVisualStyleBackColor = true;
             this.buildButton.Click += new System.EventHandler(this.buildButton_Click);
             // 
-            // checkConflictBetweenModModelBackgroundWorker
-            // 
-            this.checkConflictBetweenModModelBackgroundWorker.WorkerSupportsCancellation = true;
-            this.checkConflictBetweenModModelBackgroundWorker.DoWork += new System.ComponentModel.DoWorkEventHandler(this.checkConflictBetweenModModelBackgroundWorker_DoWork);
-            this.checkConflictBetweenModModelBackgroundWorker.RunWorkerCompleted += new System.ComponentModel.RunWorkerCompletedEventHandler(this.checkConflictBetweenModModelBackgroundWorker_RunWorkerCompleted);
-            // 
-            // checkConflictInModModelBackgroundWorker
-            // 
-            this.checkConflictInModModelBackgroundWorker.WorkerSupportsCancellation = true;
-            this.checkConflictInModModelBackgroundWorker.DoWork += new System.ComponentModel.DoWorkEventHandler(this.checkConflictInModModelBackgroundWorker_DoWork);
-            this.checkConflictInModModelBackgroundWorker.RunWorkerCompleted += new System.ComponentModel.RunWorkerCompletedEventHandler(this.checkConflictInModModelBackgroundWorker_RunWorkerCompleted);
-            // 
-            // checkDetailedConflictBetweenModModelBackgroundWorker
-            // 
-            this.checkDetailedConflictBetweenModModelBackgroundWorker.WorkerSupportsCancellation = true;
-            this.checkDetailedConflictBetweenModModelBackgroundWorker.DoWork += new System.ComponentModel.DoWorkEventHandler(this.checkDetailedConflictBetweenModModelBackgroundWorker_DoWork);
-            this.checkDetailedConflictBetweenModModelBackgroundWorker.RunWorkerCompleted += new System.ComponentModel.RunWorkerCompletedEventHandler(this.checkDetailedConflictBetweenModModelBackgroundWorker_RunWorkerCompleted);
-            // 
             // installButton
             // 
             this.installButton.BackColor = System.Drawing.Color.Transparent;
@@ -573,12 +550,6 @@
             this.openS3MOFolderToolStripMenuItem.Text = "Open S3MO Folder";
             this.openS3MOFolderToolStripMenuItem.Click += new System.EventHandler(this.openS3MOFolderToolStripMenuItem_Click);
             // 
-            // validateBackgroundWorker
-            // 
-            this.validateBackgroundWorker.WorkerSupportsCancellation = true;
-            this.validateBackgroundWorker.DoWork += new System.ComponentModel.DoWorkEventHandler(this.validateBackgroundWorker_DoWork);
-            this.validateBackgroundWorker.RunWorkerCompleted += new System.ComponentModel.RunWorkerCompletedEventHandler(this.validateBackgroundWorker_RunWorkerCompleted);
-            // 
             // progressBar
             // 
             this.progressBar.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
@@ -599,11 +570,6 @@
             this.progressLabel.Text = "ProgressLabel";
             this.progressLabel.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             this.progressLabel.Visible = false;
-            // 
-            // md5BackgroundWorker
-            // 
-            this.md5BackgroundWorker.DoWork += new System.ComponentModel.DoWorkEventHandler(this.md5BackgroundWorker_DoWork);
-            this.md5BackgroundWorker.RunWorkerCompleted += new System.ComponentModel.RunWorkerCompletedEventHandler(this.md5BackgroundWorker_RunWorkerCompleted);
             // 
             // MainForm
             // 
@@ -677,9 +643,6 @@
         private ToolStripMenuItem modListViewNonSelectedToolStripMenuItemCreateEmptyMod;
         private ColumnHeader fileFlagHeader;
         private Button buildButton;
-        private System.ComponentModel.BackgroundWorker checkConflictBetweenModModelBackgroundWorker;
-        private System.ComponentModel.BackgroundWorker checkConflictInModModelBackgroundWorker;
-        private System.ComponentModel.BackgroundWorker checkDetailedConflictBetweenModModelBackgroundWorker;
         private GroupBox logGroupBox;
         private GroupBox modGroupBox;
         private GroupBox fileGroupBox;
@@ -695,10 +658,8 @@
         private Button profileButton;
         private Button aboutButton;
         private Button warningButton;
-        private System.ComponentModel.BackgroundWorker validateBackgroundWorker;
         private ProgressBar progressBar;
         private Label progressLabel;
-        private System.ComponentModel.BackgroundWorker md5BackgroundWorker;
         private ToolStripMenuItem modListViewToolStripMenuItemEnableSelected;
         private ToolStripMenuItem modListViewToolStripMenuItemDisableSelected;
         private ToolStripSeparator toolStripSeparator1;

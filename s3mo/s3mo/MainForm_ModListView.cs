@@ -1,4 +1,4 @@
-﻿using ns;
+using ns;
 using s3molib;
 using System;
 using System.Collections.Generic;
@@ -17,9 +17,16 @@ namespace s3mo
 
         private void modListView_ItemChecked(object sender, ItemCheckedEventArgs e)
         {
-            ModModel mod = _profileModel.GetModModel(e.Item.Text);
+            // Not a user change: the list is being filled, or dragged items are being re-inserted.
+            if (_populatingModList || modListView.IsReordering)
+                return;
+
+            if (!_profileModel.TryGetModModel(e.Item.Text, out ModModel mod) || mod.Enabled == e.Item.Checked)
+                return;
             mod.Update(mod.Name, e.Item.Checked, mod.Priority);
             UpdateModModelPriority();
+            RefreshSelectedModHighlight();
+            modListView.Invalidate();
         }
 
         private bool modListView_isEditingText = false; // Use to hide the drawn string on subitem.
@@ -27,21 +34,34 @@ namespace s3mo
         private void modListView_BeforeLabelEdit(object sender, LabelEditEventArgs e)
         {
             modListView_isEditingText = true;
-            modListView_preLabelEditBuffer = modListView.SelectedItems[0].Text;
+            modListView_preLabelEditBuffer = modListView.Items[e.Item].Text;
         }
         private void modListView_AfterLabelEdit(object sender, LabelEditEventArgs e)
         {
             string? newFolderName = e.Label;
             modListView_isEditingText = false;
 
-            if (!Helper.CheckValidFolderName(newFolderName!))
+            if (newFolderName == null) // edit cancelled
+                return;
+
+            if (!Helper.CheckValidFolderName(newFolderName) || _profileModel.TryGetModModel(newFolderName, out _))
             {
                 e.CancelEdit = true;
                 return;
             }
 
             Logger.LogDebug($"Renaming mod folder from '{modListView_preLabelEditBuffer}' to '{newFolderName}'");
-            _profileModel.RenameMod(modListView_preLabelEditBuffer, newFolderName);
+            try
+            {
+                _profileModel.RenameMod(modListView_preLabelEditBuffer, newFolderName);
+            }
+            catch (Exception ex)
+            {
+                e.CancelEdit = true;
+                MessageBox.Show(ex.Message, "Couldn't rename the mod", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            ValidateModBuild();
         }
 
         private List<string> modListView_losingConflictingModModels = new List<string>();
@@ -49,122 +69,140 @@ namespace s3mo
         private void modListView_ItemSelectionChanged(object sender, ListViewItemSelectionChangedEventArgs e)
         {
             // Populate the packages panel on the right
-            fileListView.Items.Clear();
-
-            if (modListView.SelectedItems.Count != 1)
-                return;
-
-            List<PackageModel> packageModels = _profileModel.GetModModel(e.Item.Text).PackageModels;
-            packageModels.Sort((p1, p2) => StringLogicalComparer.Compare(p1.Name, p2.Name));
-
-            foreach (PackageModel packageModel in packageModels)
+            fileListView.BeginUpdate();
+            try
             {
-                ListViewItem listViewItem = new ListViewItem(packageModel.Name);
-                listViewItem.SubItems.Add(String.Empty);
-                fileListView.Items.Add(listViewItem);
+                fileListView.Items.Clear();
+
+                if (modListView.SelectedItems.Count != 1)
+                {
+                    modListView_losingConflictingModModels.Clear();
+                    modListView_winningConflictingModModels.Clear();
+                    return;
+                }
+
+                if (!_profileModel.TryGetModModel(modListView.SelectedItems[0].Text, out ModModel modModel))
+                    return;
+
+                var items = new List<ListViewItem>();
+                foreach (PackageModel packageModel in modModel.GetSortedPackages())
+                {
+                    ListViewItem listViewItem = new ListViewItem(packageModel.Name);
+                    listViewItem.SubItems.Add(String.Empty);
+                    items.Add(listViewItem);
+                }
+
+                foreach (string otherFile in modModel.GetOtherFiles())
+                {
+                    ListViewItem listViewItem = new ListViewItem(otherFile);
+                    listViewItem.SubItems.Add(String.Empty);
+                    items.Add(listViewItem);
+                }
+                fileListView.Items.AddRange(items.ToArray());
+            }
+            finally
+            {
+                fileListView.EndUpdate();
             }
 
-            string[] otherFiles = Directory.GetFiles(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Mods\\{e.Item.Text}"))
-                                                    .Where(f => !f.EndsWith(".package")).Select(p => Path.GetFileName(p)).ToArray();
+            RefreshSelectedModHighlight();
+        }
 
-            foreach (string otherFile in otherFiles)
-            {
-                ListViewItem listViewItem = new ListViewItem(otherFile);
-                listViewItem.SubItems.Add(String.Empty);
-                fileListView.Items.Add(listViewItem);
-            }
-
+        /// <summary>Colors the mods that the selected mod wins/loses against.</summary>
+        private void RefreshSelectedModHighlight()
+        {
             // Responsible for conflict row color change
             modListView_losingConflictingModModels.Clear();
             modListView_winningConflictingModModels.Clear();
 
-            ModModel modModel = _profileModel.GetModModel(e.Item.Text);
-
-            if (!modModel.Enabled)
+            if (modListView.SelectedItems.Count != 1 || !_profileModel.TryGetModModel(modListView.SelectedItems[0].Text, out ModModel modModel))
                 return;
 
-            List<ModModel> conflictingModModels = modModel.ConflictingModModels.FindAll(m => m.Enabled);
-
-            if (conflictingModModels.Count == 0)
-                return;
-
-            foreach (ModModel conflict in conflictingModModels)
+            if (modModel.Enabled)
             {
-                if (conflict.Priority < modModel.Priority)
-                    modListView_losingConflictingModModels.Add(conflict.Name);
-                else if (modModel.Priority < conflict.Priority)
-                    modListView_winningConflictingModModels.Add(conflict.Name);
+                foreach (ModModel conflict in modModel.ConflictingMods)
+                {
+                    if (!conflict.Enabled)
+                        continue;
+                    if (conflict.Priority < modModel.Priority)
+                        modListView_losingConflictingModModels.Add(conflict.Name);
+                    else if (modModel.Priority < conflict.Priority)
+                        modListView_winningConflictingModModels.Add(conflict.Name);
+                }
             }
+            modListView.Invalidate();
         }
 
         private void modListView_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e) => e.DrawDefault = true;
         private void modListView_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
         {
-            if (modListView.SelectedItems.Count == 0)
-            {
-                modListView_losingConflictingModModels.Clear();
-                modListView_winningConflictingModModels.Clear();
-            }
+            if (e.Item == null || e.SubItem == null)
+                return;
 
             // Draw background color
-            if (e.Item!.Selected)
-                e.SubItem!.BackColor = SystemColors.Highlight;
-            else if (modListView_losingConflictingModModels.Contains(e.Item!.Text))
-                e.SubItem!.BackColor = Color.LightGreen;
-            else if (modListView_winningConflictingModModels.Contains(e.Item!.Text))
-                e.SubItem!.BackColor = Color.LightCoral;
+            if (e.Item.Selected)
+                e.SubItem.BackColor = SystemColors.Highlight;
+            else if (modListView_losingConflictingModModels.Contains(e.Item.Text))
+                e.SubItem.BackColor = Color.LightGreen;
+            else if (modListView_winningConflictingModModels.Contains(e.Item.Text))
+                e.SubItem.BackColor = Color.LightCoral;
             else
-                e.SubItem!.BackColor = (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
+                e.SubItem.BackColor = (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
 
             e.DrawBackground();
 
-            // Draw Subitems
-            if (e.SubItem == e.Item.SubItems[0]) // Name
+            Color textColor = e.Item.Selected ? SystemColors.HighlightText : SystemColors.ControlText;
+            Font font = modListView.Font;
+
+            // All positions are in 96-DPI pixels scaled to the list's DPI, and text is centered vertically in the row.
+            if (e.ColumnIndex == 0) // Name
             {
-                CheckBoxRenderer.DrawCheckBox(e.Graphics, new Point(e.Bounds.X + 7, e.Bounds.Y + 3), e.Item.Checked ? System.Windows.Forms.VisualStyles.CheckBoxState.CheckedNormal : System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+                Rectangle box = modListView.GetCheckBoxBounds(e.Bounds);
+                Dpi.DrawCheckBox(e.Graphics, box, e.Item.Checked);
+
                 if (!(modListView_isEditingText && e.Item.Selected))
-                    e.Graphics.DrawString(e.SubItem.Text, this.Font, e.Item.Selected ? Brushes.White : Brushes.Black, e.Bounds.X + 25, e.Bounds.Y + 1);
-            }
-            else if (e.SubItem == e.Item.SubItems[2]) // Priority
-            {
-                e.Graphics.DrawString(e.SubItem.Text, this.Font, e.Item.Selected ? Brushes.White : Brushes.Black, e.Bounds.X - (4 * e.SubItem.Text.Length) + e.Bounds.Width / 2, e.Bounds.Y + 1);
-            }
-            else if (e.SubItem == e.Item.SubItems[1]) // Icons
-            {
-                ModModel modModel = _profileModel.GetModModel(e.Item.Text);
-
-                if (!modModel.Enabled)
-                    return;
-
-                List<ModModel> conflictingModModels = modModel.ConflictingModModels.FindAll(m => m.Enabled);
-
-                if (conflictingModModels.Count == 0)
-                    return;
-
-                conflictingModModels.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
-
-                int iconCount = 0;
-
-                if (modModel.PackageModels.Count(p => p.ConflictingPackageModelsInModModel.Count > 0) > 0)
                 {
-                    e.Graphics.DrawImage((Image)Properties.Resources.package_minus, e.Bounds.X + 2, e.Bounds.Y, 16, 16);
-                    iconCount += 1;
+                    Rectangle text = Rectangle.FromLTRB(box.Right + LogicalToDeviceUnits(5), e.Bounds.Top, e.Bounds.Right, e.Bounds.Bottom);
+                    TextRenderer.DrawText(e.Graphics, e.SubItem.Text, font, text, textColor, Dpi.CellText | TextFormatFlags.Left);
+                }
+            }
+            else if (e.ColumnIndex == 2) // Priority
+            {
+                TextRenderer.DrawText(e.Graphics, e.SubItem.Text, font, e.Bounds, textColor, Dpi.CellText | TextFormatFlags.HorizontalCenter);
+            }
+            else if (e.ColumnIndex == 1) // Icons
+            {
+                if (!_profileModel.TryGetModModel(e.Item.Text, out ModModel modModel) || !modModel.Enabled)
+                    return;
+
+                int size = LogicalToDeviceUnits(16);
+                int gap = LogicalToDeviceUnits(2);
+                int x = e.Bounds.X + gap;
+                int y = e.Bounds.Y + (e.Bounds.Height - size) / 2;
+
+                // Packages inside this mod overwrite each other
+                if (modModel.HasPackageConflictsInside)
+                {
+                    e.Graphics.DrawImage(Dpi.Icon(Properties.Resources.package_minus, size), x, y);
+                    x += size + gap;
                 }
 
                 int priority = modModel.Priority;
-                int firstConflictPriority = conflictingModModels[0].Priority;
-                int lastConflictPriority = conflictingModModels[conflictingModModels.Count - 1].Priority;
+                int lower = 0, higher = 0;
+                foreach (ModModel m in modModel.ConflictingMods)
+                {
+                    if (!m.Enabled) continue;
+                    if (m.Priority < priority) lower++;
+                    else if (m.Priority > priority) higher++;
+                }
 
-                Rectangle imageRect = new Rectangle(e.Bounds.X + 2 + (16 * iconCount), e.Bounds.Y, 16, 16);
+                if (lower == 0 && higher == 0)
+                    return;
 
-                if (priority < firstConflictPriority)
-                    e.Graphics.DrawImage((Image)Properties.Resources.error_minus, imageRect);
-                else if (firstConflictPriority < modModel.Priority && priority < lastConflictPriority)
-                    e.Graphics.DrawImage((Image)Properties.Resources.error_plusminus, imageRect);
-                else if (lastConflictPriority < modModel.Priority)
-                    e.Graphics.DrawImage((Image)Properties.Resources.error_plus, imageRect);
-                else
-                    throw new Exception($"ModModel '{Path.GetFileName(modModel.FolderPath)}' is conflicting with '{e.Item.Text}' but unable to determine its conflict status");
+                Image icon = lower > 0 && higher > 0 ? Properties.Resources.error_plusminus   // wins some, loses some
+                           : lower > 0 ? Properties.Resources.error_plus                      // overwrites lower mods
+                           : Properties.Resources.error_minus;                                // overwritten by higher mods
+                e.Graphics.DrawImage(Dpi.Icon(icon, size), x, y);
             }
         }
 
@@ -172,37 +210,38 @@ namespace s3mo
         {
             if (e.Button == MouseButtons.Right)
             {
-                Point mousePoint = new Point(e.X, e.Y);
-                bool found = false;
+                ListViewItem? hit = modListView.GetItemAt(e.X, e.Y);
 
-                foreach (ListViewItem listViewItem in modListView.Items)
-                {
-                    if (listViewItem.Bounds.Contains(mousePoint))
-                        found = true;
-                }
-
-                if (found)
+                if (hit != null)
                     modListViewContextMenuStrip.Show(Cursor.Position);
                 else
                     modListViewNonSelectedContextMenuStrip.Show(Cursor.Position);
             }
         }
 
-        private void modListView_MouseDoubleClick(object sender, MouseEventArgs e)
+        private async void modListView_MouseDoubleClick(object sender, MouseEventArgs e)
         {
             ListViewHitTestInfo info = modListView.HitTest(e.X, e.Y);
             ListViewItem listViewItem = info.Item;
 
-            if (listViewItem == null)
+            if (listViewItem == null || modListView.IsOnCheckBox(e.Location))
                 return;
 
-            listViewItem.Checked = !listViewItem.Checked;
+            await OpenModFormAsync(listViewItem.Text);
+        }
+
+        private async Task OpenModFormAsync(string modName)
+        {
             this.Enabled = false;
+            await WaitForAnalysisAsync();
 
-            while (checkDetailedConflictBetweenModModelBackgroundWorker.IsBusy)
-                Application.DoEvents();
+            if (!_profileModel.TryGetModModel(modName, out ModModel mod))
+            {
+                this.Enabled = true;
+                return;
+            }
 
-            ModForm modForm = new ModForm(_profileModel.GetModModel(listViewItem.Text));
+            ModForm modForm = new ModForm(mod);
             modForm.FormClosed += (sender, e) => this.Enabled = true;
             modForm.Show();
         }
@@ -219,9 +258,11 @@ namespace s3mo
 
             ListViewItem listViewItem = new ListViewItem(modName);
             listViewItem.Checked = false;
-            listViewItem.SubItems.Add(modListView.Items.Count.ToString());
             listViewItem.SubItems.Add("");
-            modListView.Items.Add(listViewItem);
+            listViewItem.SubItems.Add("");
+            _populatingModList = true;
+            try { modListView.Items.Add(listViewItem); }
+            finally { _populatingModList = false; }
 
             UpdateModModelPriority();
 
@@ -230,47 +271,39 @@ namespace s3mo
         }
 
 
-        private void modListViewToolStripMenuItemEnableSelected_Click(object sender, EventArgs e)
+        private void modListViewToolStripMenuItemEnableSelected_Click(object sender, EventArgs e) => SetSelectedEnabled(true);
+
+        private void modListViewToolStripMenuItemDisableSelected_Click(object sender, EventArgs e) => SetSelectedEnabled(false);
+
+        private void SetSelectedEnabled(bool enabled)
         {
             if (modListView.SelectedItems.Count == 0)
                 return;
 
-            foreach (ListViewItem item in modListView.SelectedItems)
+            _populatingModList = true; // one save at the end instead of one per item
+            try
             {
-                item.Checked = true;
-                ModModel modModel = _profileModel.GetModModel(item.Text);
-                modModel.Update(modModel.Name, true, modModel.Priority);
+                foreach (ListViewItem item in modListView.SelectedItems)
+                {
+                    modListView.SetChecked(item, enabled);
+                    if (_profileModel.TryGetModModel(item.Text, out ModModel modModel))
+                        modModel.Update(modModel.Name, enabled, modModel.Priority);
+                }
+            }
+            finally
+            {
+                _populatingModList = false;
             }
             UpdateModModelPriority();
+            RefreshSelectedModHighlight();
         }
 
-        private void modListViewToolStripMenuItemDisableSelected_Click(object sender, EventArgs e)
-        {
-            if (modListView.SelectedItems.Count == 0)
-                return;
-
-            foreach (ListViewItem item in modListView.SelectedItems)
-            {
-                item.Checked = false;
-                ModModel modModel = _profileModel.GetModModel(item.Text);
-                modModel.Update(modModel.Name, false, modModel.Priority);
-            }
-            UpdateModModelPriority();
-        }
-
-        private void modListViewToolStripMenuItemInformation_Click(object sender, EventArgs e)
+        private async void modListViewToolStripMenuItemInformation_Click(object sender, EventArgs e)
         {
             if (modListView.SelectedItems.Count != 1)
                 return;
 
-            this.Enabled = false;
-
-            while (checkDetailedConflictBetweenModModelBackgroundWorker.IsBusy)
-                Application.DoEvents();
-
-            ModForm modForm = new ModForm(_profileModel.GetModModel(modListView.SelectedItems[0].Text));
-            modForm.FormClosed += (sender, e) => this.Enabled = true;
-            modForm.Show();
+            await OpenModFormAsync(modListView.SelectedItems[0].Text);
         }
 
         private void modListViewToolStripMenuItemOpenInExplorer_Click(object sender, EventArgs e)
@@ -279,15 +312,8 @@ namespace s3mo
                 return;
 
             string modName = modListView.SelectedItems[0].Text;
-            string path = _profileModel.GetModModel(modName).FolderPath;
-
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.Arguments = path;
-            startInfo.FileName = "explorer.exe";
-            try
-            { Process.Start(startInfo); }
-            catch (Exception ex)
-            { MessageBox.Show(ex.Message); }
+            if (_profileModel.TryGetModModel(modName, out ModModel mod))
+                OpenInExplorer(mod.FolderPath);
         }
 
         private void modListViewToolStripMenuItemRenameMod_Click(object sender, EventArgs e)
@@ -311,14 +337,23 @@ namespace s3mo
 
             if (r == DialogResult.Yes)
             {
-                foreach (ListViewItem item in modListView.SelectedItems)
+                foreach (ListViewItem item in modListView.SelectedItems.Cast<ListViewItem>().ToList())
                 {
                     string name = item.Text;
-                    modListView.Items.Remove(item);
-                    _profileModel.DeleteMod(name);
+                    try
+                    {
+                        _profileModel.DeleteMod(name);
+                        modListView.Items.Remove(item);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(ex.Message, $"Couldn't delete '{name}'", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
                 }
 
                 this.UpdateModModelPriority();
+                // Conflicts with the deleted mods disappear
+                StartAnalysis();
             }
         }
 

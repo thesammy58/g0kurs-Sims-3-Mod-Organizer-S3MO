@@ -1,9 +1,9 @@
 using ns;
 using s3molib;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace s3mo
@@ -13,12 +13,17 @@ namespace s3mo
         private ProfileModel _profileModel = null!;
         private string _currentProfile = string.Empty;
 
+        private readonly PackageCache _packageCache;
+        private readonly System.Windows.Forms.Timer _uiTimer = new System.Windows.Forms.Timer();
+        private readonly Dictionary<Button, Image> _toolbarIcons = new Dictionary<Button, Image>();
+
         public MainForm()
         {
             InitializeComponent();
             this.Text = "Sims 3 Mod Organizer v" + Program.Version;
 
-            string profilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles");
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string profilePath = Path.Combine(baseDir, "Profiles");
             if (!Directory.Exists(profilePath))
             {
                 string path = Path.Combine(profilePath, "Default");
@@ -26,34 +31,45 @@ namespace s3mo
                 _currentProfile = "Default";
             }
 
-            if (Settings.TryGetSettings("Profile", out string obj))
+            if (Settings.TryGetSettings("Profile", out string obj) && obj.Length > 0)
                 _currentProfile = (string)obj;
             else
                 Settings.SetSettings("Profile", _currentProfile = "Default");
 
-            string modsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods");
+            string modsPath = Path.Combine(baseDir, "Mods");
             if (!Directory.Exists(modsPath))
                 Directory.CreateDirectory(modsPath);
 
-            ResetModel();
+            _packageCache = new PackageCache(Path.Combine(baseDir, "s3mo.cache"), modsPath);
+
+            // Log lines can come from background threads; they're queued and shown by this timer.
+            _uiTimer.Interval = 100;
+            _uiTimer.Tick += (s, e) => { FlushLog(); UpdateBuildProgress(); };
+            Logger.InfoLoggedEvent += EnqueueLog;
+            Logger.WarningLoggedEvent += EnqueueLog;
+            Logger.ErrorLoggedEvent += EnqueueLog;
+
+            foreach (Button b in new[] { aboutButton, installButton, optionsButton, profileButton, openFolderButton, clearCacheButton, refreshButton, buildButton, warningButton, playButton })
+                if (b.Image != null)
+                    _toolbarIcons[b] = b.Image;
+
+            SetupBuildButtonMenu();
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-            if (WindowState == FormWindowState.Minimized || WindowState == FormWindowState.Maximized)
+            if (_isBuilding)
             {
-                Settings.SetSettings("WindowX", RestoreBounds.Location.X);
-                Settings.SetSettings("WindowY", RestoreBounds.Location.Y);
-                Settings.SetSettings("WindowHeight", RestoreBounds.Size.Height);
-                Settings.SetSettings("WindowWidth", RestoreBounds.Size.Width);
+                MessageBox.Show("A build is still running. Please wait for it to finish.", "Building", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                e.Cancel = true;
+                return;
             }
-            else if (WindowState == FormWindowState.Normal)
-            {
-                Settings.SetSettings("WindowX", Location.X);
-                Settings.SetSettings("WindowY", Location.Y);
-                Settings.SetSettings("WindowWidth", Size.Width);
-                Settings.SetSettings("WindowHeight", Size.Height);
-            }
+
+            Rectangle bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            Settings.SetSettings("WindowX", bounds.X);
+            Settings.SetSettings("WindowY", bounds.Y);
+            Settings.SetSettings("WindowWidth", bounds.Width);
+            Settings.SetSettings("WindowHeight", bounds.Height);
             Settings.SetSettings("WindowMaximized", WindowState == FormWindowState.Maximized);
 
             Settings.SetSettings("WindowSplitContainer1SplitterDistance", splitContainer1.SplitterDistance);
@@ -63,62 +79,95 @@ namespace s3mo
             Settings.SetSettings("WindowModListViewPriorityHeaderWidth", priorityHeader.Width);
             Settings.SetSettings("WindowFileListViewFileHeaderWidth", fileHeader.Width);
             Settings.SetSettings("WindowFileListViewFlagHeaderWidth", fileFlagHeader.Width);
+            Dpi.SaveLayoutDpi("Window", this);
+
+            Logger.InfoLoggedEvent -= EnqueueLog;
+            Logger.WarningLoggedEvent -= EnqueueLog;
+            Logger.ErrorLoggedEvent -= EnqueueLog;
+            _uiTimer.Stop();
         }
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-            if (Settings.TryGetSettings("WindowX", out string obj) && int.TryParse(obj, out int i) &&
-                Settings.TryGetSettings("WindowY", out string obj2) && int.TryParse(obj2, out int j))
-                Location = new Point(i, j);
-            if (Settings.TryGetSettings("WindowWidth", out obj) && int.TryParse(obj, out i) &&
-                Settings.TryGetSettings("WindowHeight", out obj2) && int.TryParse(obj2, out j))
-                Size = new Size(i, j);
-            if (Settings.TryGetSettings("WindowMaximized", out obj) && bool.TryParse(obj, out bool b))
+            // Saved sizes are scaled from the DPI they were saved at to the current one.
+            Dpi.RestoreBounds(this, "Window", "WindowX", "WindowY", "WindowWidth", "WindowHeight");
+            if (Settings.TryGetSettings("WindowMaximized", out string obj) && bool.TryParse(obj, out bool b))
                 WindowState = b ? FormWindowState.Maximized : FormWindowState.Normal;
-            if (Settings.TryGetSettings("WindowSplitContainer1SplitterDistance", out obj) && int.TryParse(obj, out i))
-                splitContainer1.SplitterDistance = i;
-            if (Settings.TryGetSettings("WindowSplitContainer2SplitterDistance", out obj) && int.TryParse(obj, out i))
-                splitContainer2.SplitterDistance = i;
-            if (Settings.TryGetSettings("WindowModListViewModHeaderWidth", out obj) && int.TryParse(obj, out i))
-                modHeader.Width = i;
-            if (Settings.TryGetSettings("WindowModListViewFlagHeaderWidth", out obj) && int.TryParse(obj, out i))
-                flagHeader.Width = i;
-            if (Settings.TryGetSettings("WindowModListViewPriorityHeaderWidth", out obj) && int.TryParse(obj, out i))
-                priorityHeader.Width = i;
-            if (Settings.TryGetSettings("WindowFileListViewFileHeaderWidth", out obj) && int.TryParse(obj, out i))
-                fileHeader.Width = i;
-            if (Settings.TryGetSettings("WindowFileListViewFlagHeaderWidth", out obj) && int.TryParse(obj, out i))
-                fileFlagHeader.Width = i;
+            Dpi.RestoreSplitter("Window", "WindowSplitContainer1SplitterDistance", splitContainer1);
+            Dpi.RestoreSplitter("Window", "WindowSplitContainer2SplitterDistance", splitContainer2);
+            Dpi.RestoreColumnWidth("Window", "WindowModListViewModHeaderWidth", modHeader, this);
+            Dpi.RestoreColumnWidth("Window", "WindowModListViewFlagHeaderWidth", flagHeader, this);
+            Dpi.RestoreColumnWidth("Window", "WindowModListViewPriorityHeaderWidth", priorityHeader, this);
+            Dpi.RestoreColumnWidth("Window", "WindowFileListViewFileHeaderWidth", fileHeader, this);
+            Dpi.RestoreColumnWidth("Window", "WindowFileListViewFlagHeaderWidth", fileFlagHeader, this);
+            Dpi.KeepColumnsScaled(this, flagHeader, priorityHeader, fileFlagHeader);
 
-            this.SizeChanged += (s, e) =>
-            {
-                modHeader.Width = modListView.Width - 21 - flagHeader.Width - priorityHeader.Width;
-                fileHeader.Width = fileListView.Width - 21 - fileFlagHeader.Width;
-            };
-            splitContainer2.SplitterMoved += (s, e) =>
-            {
-                modHeader.Width = modListView.Width - 21 - flagHeader.Width - priorityHeader.Width;
-                fileHeader.Width = fileListView.Width - 21 - fileFlagHeader.Width;
-            };
+            this.SizeChanged += (s, e) => FitNameColumns();
+            splitContainer2.SplitterMoved += (s, e) => FitNameColumns();
+            this.DpiChanged += (s, e) => BeginInvoke(() => { ApplyToolbarIcons(); FitNameColumns(); });
 
             modListView.SetDoubleBuffered();
             fileListView.SetDoubleBuffered();
+            ApplyToolbarIcons();
 
-            Logger.InfoLoggedEvent += s => { logListBox.Items.Add("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + s); logListBox.TopIndex = logListBox.Items.Count - 1; };
-            //Logger.DebugLoggedEvent += s => { logListBox.Items.Add("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + s); logListBox.TopIndex = logListBox.Items.Count - 1; };
-            Logger.WarningLoggedEvent += s => { logListBox.Items.Add("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + s); logListBox.TopIndex = logListBox.Items.Count - 1; };
-            Logger.ErrorLoggedEvent += s => { logListBox.Items.Add("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + s); logListBox.TopIndex = logListBox.Items.Count - 1; };
+            _uiTimer.Start();
+            ResetModel();
         }
+
+        /// <summary>Toolbar icons are 32px bitmaps; scale them with the window so they don't look tiny at 150-200%.</summary>
+        private void ApplyToolbarIcons()
+        {
+            int size = LogicalToDeviceUnits(32);
+            foreach (var kv in _toolbarIcons)
+                kv.Key.Image = Dpi.Icon(kv.Value, size);
+        }
+
+        /// <summary>The name columns take the space the other columns leave.</summary>
+        private void FitNameColumns()
+        {
+            int scroll = Dpi.ScrollBarAllowance(modListView);
+            modHeader.Width = Math.Max(LogicalToDeviceUnits(80), modListView.Width - scroll - flagHeader.Width - priorityHeader.Width);
+            fileHeader.Width = Math.Max(LogicalToDeviceUnits(80), fileListView.Width - scroll - fileFlagHeader.Width);
+        }
+
+        // ------------------------------------------------------------------ log
+
+        private readonly ConcurrentQueue<string> _pendingLog = new ConcurrentQueue<string>();
+        private const int MaxLogLines = 5000;
+
+        private void EnqueueLog(string s) => _pendingLog.Enqueue("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + s);
+
+        private void FlushLog()
+        {
+            if (_pendingLog.IsEmpty || logListBox.IsDisposed)
+                return;
+
+            logListBox.BeginUpdate();
+            try
+            {
+                while (_pendingLog.TryDequeue(out string? line))
+                    logListBox.Items.Add(line);
+                while (logListBox.Items.Count > MaxLogLines)
+                    logListBox.Items.RemoveAt(0);
+                logListBox.TopIndex = logListBox.Items.Count - 1;
+            }
+            finally
+            {
+                logListBox.EndUpdate();
+            }
+        }
+
+        // ------------------------------------------------------------------ model
 
         private void ResetModel()
         {
             _profileModel = new ProfileModel();
             _profileModel.Setup(_currentProfile);
-            CheckConflictsBetweenModModels();
-            CheckConflictsInModModels();
-            ComputeMD5();
             RefreshListViews(false);
+            StartAnalysis();
         }
+
+        private bool _populatingModList;
 
         private void RefreshListViews(bool setupModel = true)
         {
@@ -128,16 +177,29 @@ namespace s3mo
             List<ModModel> mods = _profileModel.ModModels;
             mods.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
 
-            modListView.Items.Clear();
-            fileListView.Items.Clear();
-
-            foreach (ModModel m in mods)
+            _populatingModList = true;
+            modListView.BeginUpdate();
+            try
             {
-                ListViewItem item = new ListViewItem(m.Name);
-                item.Checked = m.Enabled;
-                item.SubItems.Add(string.Empty); // Placeholder for icon, else will throw exception.
-                item.SubItems.Add(m.Priority.ToString());
-                modListView.Items.Add(item);
+                modListView.Items.Clear();
+                fileListView.Items.Clear();
+
+                int displayIndex = 0;
+                List<ListViewItem> items = new List<ListViewItem>(mods.Count);
+                foreach (ModModel m in mods)
+                {
+                    ListViewItem item = new ListViewItem(m.Name);
+                    item.Checked = m.Enabled;
+                    item.SubItems.Add(string.Empty); // Placeholder for icon, else will throw exception.
+                    item.SubItems.Add(m.Enabled ? (displayIndex++).ToString() : string.Empty);
+                    items.Add(item);
+                }
+                modListView.Items.AddRange(items.ToArray());
+            }
+            finally
+            {
+                modListView.EndUpdate();
+                _populatingModList = false;
             }
 
             string[] profiles = Directory.GetDirectories(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles"));
@@ -148,6 +210,7 @@ namespace s3mo
                 profileComboBox.Items.Add(Path.GetFileName(path));
 
             profileComboBox.SelectedItem = _currentProfile;
+            FitNameColumns();
         }
 
         private void UpdateModModelPriority()
@@ -157,7 +220,8 @@ namespace s3mo
 
             foreach (ListViewItem item in modListView.Items)
             {
-                ModModel mod = _profileModel.GetModModel(item.Text);
+                if (!_profileModel.TryGetModModel(item.Text, out ModModel mod))
+                    continue;
                 mod.Update(mod.Name, mod.Enabled, realIndex);
 
                 if (mod.Enabled)
@@ -172,152 +236,16 @@ namespace s3mo
             ValidateModBuild();
         }
 
-        private void BuildMods()
-        {
-            if (!Settings.TryGetSettings("DocumentsFolderPath", out string sims3FolderPath))
-            {
-                MessageBox.Show("No Sims 3 Documents folder path is entered in settings, aborting merge process.", "Invalid Folder Path", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            Logger.Log("Build started");
-
-            this.Enabled = false;
-            Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start();
-
-            string modsFolderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods");
-            string sims3ModsFolderPath = Path.Combine(sims3FolderPath, "Mods");
-
-            if (!Directory.Exists(sims3ModsFolderPath))
-                Directory.CreateDirectory(sims3ModsFolderPath);
-
-            string modBuildFolderPath = Path.Combine(sims3ModsFolderPath, "ModBuilds");
-            if (Directory.Exists(modBuildFolderPath))
-                Directory.Delete(modBuildFolderPath, true);
-
-            Directory.CreateDirectory(modBuildFolderPath);
-
-            string resourceCfgPath = Path.Combine(sims3ModsFolderPath, "Resource.cfg");
-            StreamWriter w = new StreamWriter(resourceCfgPath);
-
-            string buildPriority = Settings.TryGetSettings("BuildPriority", out string obj) ? obj : "495";
-
-            string[] modSetupLines = new string[]
-            {
-                $"Priority {buildPriority}",
-                "PackedFile \"ModBuilds/*.package\"",
-                "",
-            };
-
-            if (Settings.TryGetSettings("BuildResourceCFG", out string resourcecfg))
-                modSetupLines = modSetupLines.Concat(resourcecfg.Split(" \\n ")).ToArray();
-
-            foreach (string l in modSetupLines)
-                w.WriteLine(l);
-
-            w.Close();
-            w.BaseStream.Close();
-
-            FileStream stream = null!;
-            try
-            { stream = new FileStream(Path.Combine(modBuildFolderPath, "Merge.bin"), FileMode.Create, FileAccess.Write, FileShare.None); }
-            catch (Exception ex)
-            { MessageBox.Show(ex.Message, "Could not write packages meta. Aborting.", MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
-
-            BinaryWriter bw = new BinaryWriter(stream);
-
-
-            List<ModModel> mods = _profileModel.ModModels;
-            mods.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
-
-            List<Package> packagesToMerge = new List<Package>();
-
-            foreach (ModModel mod in mods)
-            {
-                if (!mod.Enabled)
-                    continue;
-
-                List<PackageModel> packageModels = mod.PackageModels;
-                packageModels.Sort((p1, p2) => StringLogicalComparer.Compare(p1.Name, p2.Name));
-
-                foreach (PackageModel packageModel in packageModels)
-                {
-                    packagesToMerge.Add(packageModel.Package);
-
-                    while (checkDetailedConflictBetweenModModelBackgroundWorker.IsBusy || checkDetailedConflictBetweenModModelBackgroundWorker.IsBusy)
-                    {
-                        Logger.Log("Waiting for conflict calculation to complete.");
-                        Application.DoEvents();
-                        Thread.Sleep(1000);
-                    }
-
-                    if (packageModel.HashBytes == null)
-                    {
-                        bw.Close();
-                        stream.Close();
-                        stopwatch.Stop();
-                        this.Enabled = true;
-                        MessageBox.Show("Wait for MD5 hashbytes to compute or refresh if it's not computing.", "No hashbyte to write", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        Logger.Log("Build canceled due to lack of hashbytes.");
-                        return;
-                    }
-
-                    bw.Write(mod.ConflictingModModels.FindAll(m => m.Enabled).Count > 0);
-                    bw.Write(packageModel.HashBytes!);
-                }
-            }
-            bw.Close();
-            stream.Close();
-
-
-            uint buildLimit = 1000;
-            if (Settings.TryGetSettings("BuildSizeLimit", out obj))
-                uint.TryParse(obj, out buildLimit);
-
-            buildLimit *= 1000000;
-
-
-            int count = packagesToMerge.Count;
-            progressLabel.Visible = true;
-            progressBar.Visible = true;
-            progressBar.Maximum = count;
-
-            BackgroundWorker mergeBackgroundWorker = new BackgroundWorker();
-            mergeBackgroundWorker.WorkerReportsProgress = true;
-            mergeBackgroundWorker.DoWork += (s, e) => Package.Merge(modBuildFolderPath, packagesToMerge, buildLimit, i => mergeBackgroundWorker.ReportProgress(i));
-            mergeBackgroundWorker.ProgressChanged += (s, e) =>
-            {
-                string text = $"Merging {Path.GetFileName(packagesToMerge[e.ProgressPercentage].FilePath)}";
-                Logger.Log(text);
-                progressLabel.Text = text;
-                progressBar.Value = count - e.ProgressPercentage;
-            };
-            mergeBackgroundWorker.RunWorkerCompleted += (s, e) =>
-            {
-                Logger.Log($"Build process finished in {stopwatch.ElapsedMilliseconds} ms for {count} packages.");
-                stopwatch.Stop();
-
-                progressLabel.Visible = false;
-                progressBar.Visible = false;
-                this.Enabled = true;
-
-                warningButton.Enabled = false;
-                ComputeMergedBuildMD5();
-            };
-            mergeBackgroundWorker.RunWorkerAsync();
-        }
-
-
         private void profileComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
             string profileName = (string)profileComboBox.SelectedItem;
-            if (_currentProfile.Equals(profileName))
+            if (profileName == null || _currentProfile.Equals(profileName))
                 return;
 
             _currentProfile = profileName;
             Settings.SetSettings("Profile", _currentProfile);
             RefreshListViews();
+            ValidateModBuild();
         }
 
         private void aboutButton_Click(object sender, EventArgs e)
@@ -351,17 +279,16 @@ namespace s3mo
                         Sims3Pack.Unpack(path, tempPath);
 
                     else if (extension.Equals(".package", StringComparison.OrdinalIgnoreCase))
-                        File.Copy(path, Path.Combine(tempPath, $"{Path.GetFileName(path)}"));
+                        File.Copy(path, Path.Combine(tempPath, $"{Path.GetFileName(path)}"), true);
 
                     else if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
                     {
-                        ZipFile.ExtractToDirectory(path, tempPath);
+                        // Keep the folders inside the zip; they become subfolders of the mod.
+                        ZipFile.ExtractToDirectory(path, tempPath, overwriteFiles: true);
 
-                        string[] sims3packsPath = Directory.GetFiles(tempPath, "*.sims3pack");
-
-                        foreach (string p in sims3packsPath)
+                        foreach (string p in Directory.GetFiles(tempPath, "*.sims3pack", new EnumerationOptions { RecurseSubdirectories = true, MatchCasing = MatchCasing.CaseInsensitive }))
                         {
-                            Sims3Pack.Unpack(p, tempPath);
+                            Sims3Pack.Unpack(p, Path.GetDirectoryName(p)!);
                             File.Delete(p);
                         }
                     }
@@ -384,7 +311,7 @@ namespace s3mo
         private void optionsButton_Click(object sender, EventArgs e)
         {
             SettingsForm settingsForm = new SettingsForm();
-            settingsForm.FormClosed += (s, e) => this.Enabled = true;
+            settingsForm.FormClosed += (s, e) => { this.Enabled = true; ValidateModBuild(); };
             this.Enabled = false;
             settingsForm.Show();
         }
@@ -397,6 +324,7 @@ namespace s3mo
             {
                 RefreshListViews();
                 this.Enabled = true;
+                ValidateModBuild();
             };
             form.Show();
         }
@@ -407,6 +335,17 @@ namespace s3mo
         }
 
         #region openFolderToolStip
+
+        private static void OpenInExplorer(string path)
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.Arguments = $"\"{path}\"";
+            startInfo.FileName = "explorer.exe";
+            try
+            { Process.Start(startInfo); }
+            catch (Exception ex)
+            { MessageBox.Show(ex.Message); }
+        }
 
         private void openGameFolderToolStripMenuItem_Click(object sender, EventArgs e)
         {
@@ -421,13 +360,7 @@ namespace s3mo
                 return;
             }
 
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.Arguments = Path.GetDirectoryName(path);
-            startInfo.FileName = "explorer.exe";
-            try
-            { Process.Start(startInfo); }
-            catch (Exception ex)
-            { MessageBox.Show(ex.Message); }
+            OpenInExplorer(Path.GetDirectoryName(path)!);
         }
 
         private void openGameDocumentsFolderToolStripMenuItem_Click(object sender, EventArgs e)
@@ -442,30 +375,13 @@ namespace s3mo
                 MessageBox.Show($"Folder at '{path}' does not exists");
                 return;
             }
-            if (!Path.GetFileName(path).Equals("The Sims 3"))
-            {
-                MessageBox.Show($"Folder at '{path}' is not a Sims 3 folder");
-                return;
-            }
 
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.Arguments = path;
-            startInfo.FileName = "explorer.exe";
-            try
-            { Process.Start(startInfo); }
-            catch (Exception ex)
-            { MessageBox.Show(ex.Message); }
+            OpenInExplorer(path);
         }
 
         private void openS3MOFolderToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.Arguments = AppDomain.CurrentDomain.BaseDirectory;
-            startInfo.FileName = "explorer.exe";
-            try
-            { Process.Start(startInfo); }
-            catch (Exception ex)
-            { MessageBox.Show(ex.Message); }
+            OpenInExplorer(AppDomain.CurrentDomain.BaseDirectory);
         }
 
         #endregion
@@ -491,46 +407,47 @@ namespace s3mo
             List<string> deleteFileList = new List<string>();
             List<string> deleteFolderList = new List<string>();
 
-            if (Settings.TryGetSettings("ClearCASPartCache", out string obj) && bool.TryParse(obj, out bool b) && b)
+            bool On(string key) => Settings.TryGetSettings(key, out string v) && bool.TryParse(v, out bool on) && on;
+            IEnumerable<string> FilesIn(string folder, string pattern) => Directory.Exists(folder) ? Directory.GetFiles(folder, pattern) : Array.Empty<string>();
+
+            if (On("ClearCASPartCache"))
                 deleteFileList.Add(Path.Combine(path, "CASPartCache.package"));
-            if (Settings.TryGetSettings("ClearCompositorCache", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearCompositorCache"))
                 deleteFileList.Add(Path.Combine(path, "compositorCache.package"));
-            if (Settings.TryGetSettings("ClearScriptCache", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearScriptCache"))
                 deleteFileList.Add(Path.Combine(path, "scriptCache.package"));
-            if (Settings.TryGetSettings("ClearSimCompositorCache", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearSimCompositorCache"))
                 deleteFileList.Add(Path.Combine(path, "simCompositorCache.package"));
-            if (Settings.TryGetSettings("ClearSocialCache", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearSocialCache"))
                 deleteFileList.Add(Path.Combine(path, "socialCache.package"));
-            if (Settings.TryGetSettings("ClearDCCacheDCC", out obj) && bool.TryParse(obj, out b) && b)
-                deleteFileList.Add(Path.Combine(path, "DCCache\\dcc.ent"));
-            if (Settings.TryGetSettings("ClearDCCacheMissingdeps", out obj) && bool.TryParse(obj, out b) && b)
-                deleteFileList.Add(Path.Combine(path, "DCCache\\missingdeps.idx"));
-            if (Settings.TryGetSettings("ClearDownloadsBin", out obj) && bool.TryParse(obj, out b) && b)
-                foreach (string p in Directory.GetFiles(Path.Combine(path, "Downloads"), "*.bin"))
-                    deleteFileList.Add(p);
-            if (Settings.TryGetSettings("ClearFeaturedItems", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearDCCacheDCC"))
+                deleteFileList.Add(Path.Combine(path, "DCCache", "dcc.ent"));
+            if (On("ClearDCCacheMissingdeps"))
+                deleteFileList.Add(Path.Combine(path, "DCCache", "missingdeps.idx"));
+            if (On("ClearDownloadsBin"))
+                deleteFileList.AddRange(FilesIn(Path.Combine(path, "Downloads"), "*.bin"));
+            if (On("ClearFeaturedItems"))
                 deleteFolderList.Add(Path.Combine(path, "FeaturedItems"));
-            if (Settings.TryGetSettings("ClearIGACache", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearIGACache"))
                 deleteFolderList.Add(Path.Combine(path, "IGACache"));
-            if (Settings.TryGetSettings("ClearSavedSimsDownloadedSims", out obj) && bool.TryParse(obj, out b) && b)
-                deleteFileList.Add(Path.Combine(path, "SavedSims\\downloadedsims.index"));
-            if (Settings.TryGetSettings("ClearSigsCacheBin", out obj) && bool.TryParse(obj, out b) && b)
-                foreach (string p in Directory.GetFiles(Path.Combine(path, "SigsCache"), "*.bin"))
-                    deleteFileList.Add(p);
-            if (Settings.TryGetSettings("ClearThumbnails", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearSavedSimsDownloadedSims"))
+                deleteFileList.Add(Path.Combine(path, "SavedSims", "downloadedsims.index"));
+            if (On("ClearSigsCacheBin"))
+                deleteFileList.AddRange(FilesIn(Path.Combine(path, "SigsCache"), "*.bin"));
+            if (On("ClearThumbnails"))
                 deleteFolderList.Add(Path.Combine(path, "Thumbnails"));
-            if (Settings.TryGetSettings("ClearWorldCaches", out obj) && bool.TryParse(obj, out b) && b)
+            if (On("ClearWorldCaches"))
                 deleteFolderList.Add(Path.Combine(path, "WorldCaches"));
-            if (Settings.TryGetSettings("ClearNRaasScriptErrors", out obj) && bool.TryParse(obj, out b) && b)
-                foreach (string p in Directory.GetFiles(path, "ScriptError*.xml"))
-                    deleteFileList.Add(p);
+            if (On("ClearNRaasScriptErrors"))
+                deleteFileList.AddRange(FilesIn(path, "ScriptError*.xml"));
 
             foreach (string p in deleteFileList)
             {
                 if (File.Exists(p))
                 {
                     Logger.Log("Deleting File " + Path.GetFileName(p));
-                    File.Delete(p);
+                    try { File.Delete(p); }
+                    catch (Exception ex) { Logger.LogError($"Couldn't delete {p}: {ex.Message}"); }
                 }
             }
             foreach (string p in deleteFolderList)
@@ -538,14 +455,15 @@ namespace s3mo
                 if (Directory.Exists(p))
                 {
                     Logger.Log("Deleting Folder " + Path.GetFileName(p));
-                    Directory.Delete(p, true);
+                    try { Directory.Delete(p, true); }
+                    catch (Exception ex) { Logger.LogError($"Couldn't delete {p}: {ex.Message}"); }
                 }
             }
         }
 
         private void refreshButton_Click(object sender, EventArgs e) => ResetModel();
 
-        private void buildButton_Click(object sender, EventArgs e) => BuildMods();
+        private void buildButton_Click(object sender, EventArgs e) => BuildMods(forceFull: (ModifierKeys & Keys.Shift) != 0);
 
         private void playButton_Click(object sender, EventArgs e)
         {
@@ -567,16 +485,13 @@ namespace s3mo
                     return;
             }
 
-            //BuildMods();
             Process process = new Process();
             process.StartInfo.FileName = path;
+            process.StartInfo.WorkingDirectory = Path.GetDirectoryName(path);
             try
             { process.Start(); }
             catch (Exception ex)
             { MessageBox.Show(ex.Message, "Couldn't start game process", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
-
-
     }
-
 }

@@ -39,20 +39,12 @@ namespace s3mo
             if (resourceDataBackgroundWorker.IsBusy)
                 resourceDataBackgroundWorker.CancelAsync();
 
-            if (WindowState == FormWindowState.Maximized)
-            {
-                Settings.SetSettings("ModFormX", RestoreBounds.Location.X);
-                Settings.SetSettings("ModFormY", RestoreBounds.Location.Y);
-                Settings.SetSettings("ModFormWidth", RestoreBounds.Size.Width);
-                Settings.SetSettings("ModFormHeight", RestoreBounds.Size.Height);
-            }
-            else
-            {
-                Settings.SetSettings("ModFormX", Location.X);
-                Settings.SetSettings("ModFormY", Location.Y);
-                Settings.SetSettings("ModFormWidth", Size.Width);
-                Settings.SetSettings("ModFormHeight", Size.Height);
-            }
+            Rectangle bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            Settings.SetSettings("ModFormX", bounds.X);
+            Settings.SetSettings("ModFormY", bounds.Y);
+            Settings.SetSettings("ModFormWidth", bounds.Width);
+            Settings.SetSettings("ModFormHeight", bounds.Height);
+            Dpi.SaveLayoutDpi("ModForm", this);
             Settings.SetSettings("ModFormMaximized", (WindowState == FormWindowState.Maximized ? true : false));
             Settings.SetSettings("ModFormTab", tabControl.TabPages.IndexOf(tabControl.SelectedTab));
 
@@ -83,62 +75,38 @@ namespace s3mo
 
         private void ModForm_Load(object sender, EventArgs e)
         {
-            if (Settings.TryGetSettings("ModFormX", out string obj) && Settings.TryGetSettings("ModFormY", out string obj2)
-                && int.TryParse(obj, out int i) && int.TryParse(obj2, out int j))
-                Location = new Point(i, j);
-            if (Settings.TryGetSettings("ModFormWidth", out obj) && Settings.TryGetSettings("ModFormHeight", out obj2)
-                && int.TryParse(obj, out i) && int.TryParse(obj2, out j))
-                Size = new Size(i, j);
-            if (Settings.TryGetSettings("ModFormMaximized", out obj) && bool.TryParse(obj, out bool b))
+            Dpi.RestoreBounds(this, "ModForm", "ModFormX", "ModFormY", "ModFormWidth", "ModFormHeight");
+            if (Settings.TryGetSettings("ModFormMaximized", out string obj) && bool.TryParse(obj, out bool b))
                 WindowState = b ? FormWindowState.Maximized : FormWindowState.Normal;
-            if (Settings.TryGetSettings("ModFormTab", out obj) && int.TryParse(obj, out i))
+            if (Settings.TryGetSettings("ModFormTab", out obj) && int.TryParse(obj, out int i) && i >= 0 && i < tabControl.TabPages.Count)
                 tabControl.SelectedTab = tabControl.TabPages[i];
 
-            if (Settings.TryGetSettings("ModFormResourceNameHeaderWidth", out obj) && int.TryParse(obj, out i))
-                resourceNameHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormResourceTagHeaderWidth", out obj) && int.TryParse(obj, out i))
-                resourceTagHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormResourceTypeHeaderWidth", out obj) && int.TryParse(obj, out i))
-                resourceTypeHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormResourceGroupHeaderWidth", out obj) && int.TryParse(obj, out i))
-                resourceGroupHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormResourceInstanceHeaderWidth", out obj) && int.TryParse(obj, out i))
-                resourceInstanceHeader.Width = i;
-
-            if (Settings.TryGetSettings("ModFormLosingTagHeaderWidth", out obj) && int.TryParse(obj, out i))
-                losingTagHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormLosingResourceHeaderWidth", out obj) && int.TryParse(obj, out i))
-                losingResourceHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormLosingPackageHeader1Width", out obj) && int.TryParse(obj, out i))
-                losingPackageHeader1.Width = i;
-            if (Settings.TryGetSettings("ModFormLosingBlankHeaderWidth", out obj) && int.TryParse(obj, out i))
-                losingBlankHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormLosingModHeaderWidth", out obj) && int.TryParse(obj, out i))
-                losingModHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormLosingPackageHeader2Width", out obj) && int.TryParse(obj, out i))
-                losingPackageHeader2.Width = i;
-
-            if (Settings.TryGetSettings("ModFormWinningTagHeaderWidth", out obj) && int.TryParse(obj, out i))
-                winningTagHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormWinningResourceHeaderWidth", out obj) && int.TryParse(obj, out i))
-                winningResourceHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormWinningPackageHeader1Width", out obj) && int.TryParse(obj, out i))
-                winningPackageHeader1.Width = i;
-            if (Settings.TryGetSettings("ModFormWinningBlankHeaderWidth", out obj) && int.TryParse(obj, out i))
-                winningBlankHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormWinningModHeaderWidth", out obj) && int.TryParse(obj, out i))
-                winningModHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormWinningPackageHeader2Width", out obj) && int.TryParse(obj, out i))
-                winningPackageHeader2.Width = i;
+            foreach (var (key, column) in new (string, ColumnHeader)[]
+            {
+                ("ModFormResourceNameHeaderWidth", resourceNameHeader), ("ModFormResourceTagHeaderWidth", resourceTagHeader),
+                ("ModFormResourceTypeHeaderWidth", resourceTypeHeader), ("ModFormResourceGroupHeaderWidth", resourceGroupHeader),
+                ("ModFormResourceInstanceHeaderWidth", resourceInstanceHeader),
+                ("ModFormLosingTagHeaderWidth", losingTagHeader), ("ModFormLosingResourceHeaderWidth", losingResourceHeader),
+                ("ModFormLosingPackageHeader1Width", losingPackageHeader1), ("ModFormLosingBlankHeaderWidth", losingBlankHeader),
+                ("ModFormLosingModHeaderWidth", losingModHeader), ("ModFormLosingPackageHeader2Width", losingPackageHeader2),
+                ("ModFormWinningTagHeaderWidth", winningTagHeader), ("ModFormWinningResourceHeaderWidth", winningResourceHeader),
+                ("ModFormWinningPackageHeader1Width", winningPackageHeader1), ("ModFormWinningBlankHeaderWidth", winningBlankHeader),
+                ("ModFormWinningModHeaderWidth", winningModHeader), ("ModFormWinningPackageHeader2Width", winningPackageHeader2),
+            })
+                Dpi.RestoreColumnWidth("ModForm", key, column, this);
+            Dpi.KeepColumnsScaled(this, resourceNameHeader, resourceTagHeader, resourceTypeHeader, resourceGroupHeader, resourceInstanceHeader,
+                losingTagHeader, losingResourceHeader, losingBlankHeader, losingModHeader,
+                winningTagHeader, winningResourceHeader, winningBlankHeader, winningModHeader, packageFlagHeader);
 
             this.SizeChanged += (s, e) =>
             {
-                int width = losingListView.Size.Width - losingTagHeader.Width - losingResourceHeader.Width - losingBlankHeader.Width - losingModHeader.Width - 21;
+                int scroll = Dpi.ScrollBarAllowance(losingListView);
+                int width = losingListView.Size.Width - losingTagHeader.Width - losingResourceHeader.Width - losingBlankHeader.Width - losingModHeader.Width - scroll;
                 width = (int)((float)width * 0.5f);
                 losingPackageHeader1.Width = width;
                 losingPackageHeader2.Width = width;
 
-                width = winningListView.Size.Width - winningTagHeader.Width - winningResourceHeader.Width - winningBlankHeader.Width - winningModHeader.Width - 21;
+                width = winningListView.Size.Width - winningTagHeader.Width - winningResourceHeader.Width - winningBlankHeader.Width - winningModHeader.Width - scroll;
                 width = (int)((float)width * 0.5f);
                 winningPackageHeader1.Width = width;
                 winningPackageHeader2.Width = width;
@@ -245,10 +213,10 @@ namespace s3mo
                     item.SubItems.Add(type);
                 else
                     item.SubItems.Add(string.Empty);
-                item.SubItems.Add(resourceModel.PackageName.Substring(0, resourceModel.PackageName.LastIndexOf(".package")));
+                item.SubItems.Add(PackageModel.StripExtension(resourceModel.PackageName));
                 item.SubItems.Add(string.Empty);
                 item.SubItems.Add(resourceModel.OtherModName);
-                item.SubItems.Add(resourceModel.OtherPackageName.Substring(0, resourceModel.OtherPackageName.LastIndexOf(".package")));
+                item.SubItems.Add(PackageModel.StripExtension(resourceModel.OtherPackageName));
                 losingListView.Items.Add(item);
             }
 
@@ -259,10 +227,10 @@ namespace s3mo
                     item.SubItems.Add(type);
                 else
                     item.SubItems.Add(string.Empty);
-                item.SubItems.Add(resourceModel.PackageName.Substring(0, resourceModel.PackageName.LastIndexOf(".package")));
+                item.SubItems.Add(PackageModel.StripExtension(resourceModel.PackageName));
                 item.SubItems.Add(string.Empty);
                 item.SubItems.Add(resourceModel.OtherModName);
-                item.SubItems.Add(resourceModel.OtherPackageName.Substring(0, resourceModel.OtherPackageName.LastIndexOf(".package")));
+                item.SubItems.Add(PackageModel.StripExtension(resourceModel.OtherPackageName));
                 winningListView.Items.Add(item);
             }
         }
@@ -326,7 +294,7 @@ namespace s3mo
 
         private List<ResourceModel> _resourceModels = new List<ResourceModel>();
         private Dictionary<string, string> _nameMapLookup = new();
-        private Dictionary<string, Bitmap> _ddsBitmaps = new();
+        private System.Collections.Concurrent.ConcurrentDictionary<string, Bitmap> _ddsBitmaps = new();
         private void PopulateResourceContent()
         {
             if (_packageModel == null)
@@ -335,8 +303,7 @@ namespace s3mo
             resourceSplitContainer.Visible = true;
             packageSplitContainer.Visible = false;
 
-            if (Settings.TryGetSettings("ModFormResourceSplitContainerSplitterDistance", out string obj) && int.TryParse(obj, out int i))
-                resourceSplitContainer.SplitterDistance = i;
+            Dpi.RestoreSplitter("ModForm", "ModFormResourceSplitContainerSplitterDistance", resourceSplitContainer);
 
             _resourceModels.Clear();
 
@@ -386,6 +353,9 @@ namespace s3mo
 
         private void resourceDataBackgroundWorker_DoWork(object sender, DoWorkEventArgs e)
         {
+            // One open file for all resources (it used to be opened again for every resource).
+            using PackageReader reader = _package.OpenReader();
+
             for (int i = 0; i < _resourceModels.Count; i++)
             {
                 if (resourceDataBackgroundWorker.CancellationPending)
@@ -394,10 +364,13 @@ namespace s3mo
                     return;
                 }
 
-                resourceDataBackgroundWorker.ReportProgress(i);
+                if (i % 64 == 0)
+                    resourceDataBackgroundWorker.ReportProgress(i);
 
                 ResourceModel resourceModel = _resourceModels[i];
-                byte[] data = _package.GetUncompressedData(resourceModel.ResourceEntry);
+                byte[] data;
+                try { data = reader.ReadUncompressed(resourceModel.ResourceEntry); }
+                catch (Exception) { continue; } // unreadable resource: shown as empty
                 resourceModel.SetData(data);
 
                 if (Helper.DDSTypes.Contains(resourceModel.Type))
@@ -409,7 +382,7 @@ namespace s3mo
                     { }
 
                     if (dds != null && dds.images.Length > 0)
-                        _ddsBitmaps.Add(resourceModel.ResourceKey, dds.images[0]);
+                        _ddsBitmaps[resourceModel.ResourceKey] = dds.images[0];
                 }
             }
         }
@@ -492,14 +465,9 @@ namespace s3mo
             packageSplitContainer.Visible = true;
 
             // These are down here because setting the control visible/invisible will change those values
-            if (Settings.TryGetSettings("ModFormPackageSplitContainerSplitterDistance", out string obj) && int.TryParse(obj, out int i))
-                packageSplitContainer.SplitterDistance = i;
-            if (Settings.TryGetSettings("ModFormPackageSplitContainerSplitterDistance", out obj) && int.TryParse(obj, out i))
-                packageSplitContainer.SplitterDistance = i;
-            if (Settings.TryGetSettings("ModFormPackageHeaderWidth", out obj) && int.TryParse(obj, out i))
-                packageHeader.Width = i;
-            if (Settings.TryGetSettings("ModFormPackageFlagHeaderWidth", out obj) && int.TryParse(obj, out i))
-                packageFlagHeader.Width = i;
+            Dpi.RestoreSplitter("ModForm", "ModFormPackageSplitContainerSplitterDistance", packageSplitContainer);
+            Dpi.RestoreColumnWidth("ModForm", "ModFormPackageHeaderWidth", packageHeader, this);
+            Dpi.RestoreColumnWidth("ModForm", "ModFormPackageFlagHeaderWidth", packageFlagHeader, this);
 
 
             List<PackageModel> packageModels = _modModel.PackageModels;
@@ -524,8 +492,8 @@ namespace s3mo
                 return;
 
             ListViewItem item = packageListView.SelectedItems[0];
-            List<PackageModel> packageModels = _modModel.PackageModels;
-            PackageModel packageModel = packageModels.Find(p => item.Text.Equals(p.Name))!;
+            if (!_modModel.TryGetPackageModel(item.Text, out PackageModel packageModel))
+                return;
             List<PackageModel> conflictingPackageModels = packageModel.ConflictingPackageModelsInModModel;
 
             if (conflictingPackageModels.Count == 0)
@@ -563,12 +531,15 @@ namespace s3mo
 
             e.DrawBackground();
 
-            if (e.SubItem == e.Item!.SubItems[0])
-                e.Graphics.DrawString(e.SubItem.Text, this.Font, e.Item.Selected ? Brushes.White : Brushes.Black, e.Bounds.X + 5, e.Bounds.Y + 1);
-            else if (e.SubItem == e.Item.SubItems[1])
+            if (e.ColumnIndex == 0)
             {
-                List<PackageModel> packageModels = _modModel.PackageModels;
-                PackageModel packageModel = packageModels.Find(p => e.Item.Text.Equals(p.Name))!;
+                Rectangle text = Rectangle.FromLTRB(e.Bounds.Left + LogicalToDeviceUnits(5), e.Bounds.Top, e.Bounds.Right, e.Bounds.Bottom);
+                TextRenderer.DrawText(e.Graphics, e.SubItem.Text, packageListView.Font, text, e.Item.Selected ? SystemColors.HighlightText : SystemColors.ControlText, Dpi.CellText | TextFormatFlags.Left);
+            }
+            else if (e.ColumnIndex == 1)
+            {
+                if (!_modModel.TryGetPackageModel(e.Item.Text, out PackageModel packageModel))
+                    return;
                 List<PackageModel> conflictingPackageModels = packageModel.ConflictingPackageModelsInModModel;
 
                 if (conflictingPackageModels.Count == 0)
@@ -576,17 +547,18 @@ namespace s3mo
 
                 conflictingPackageModels.Sort((p1, p2) => StringLogicalComparer.Compare(p1.Name, p2.Name));
 
-                Rectangle imageRect = new Rectangle(e.Bounds.X + (int)(e.Bounds.Width / 2f) - 8, e.Bounds.Y + (int)(e.Bounds.Height / 2f) - 8, 16, 16);
+                int size = LogicalToDeviceUnits(16);
+                Point at = new Point(e.Bounds.X + (e.Bounds.Width - size) / 2, e.Bounds.Y + (e.Bounds.Height - size) / 2);
 
                 int i = StringLogicalComparer.Compare(packageModel.Name, conflictingPackageModels[0].Name);
                 int j = StringLogicalComparer.Compare(packageModel.Name, conflictingPackageModels[conflictingPackageModels.Count - 1].Name);
 
                 if (i < 0 && j < 0)
-                    e.Graphics.DrawImage(Properties.Resources.error_minus, imageRect);
+                    e.Graphics.DrawImage(Dpi.Icon(Properties.Resources.error_minus, size), at);
                 else if (i > 0 && j < 0)
-                    e.Graphics.DrawImage(Properties.Resources.error_plusminus, imageRect);
+                    e.Graphics.DrawImage(Dpi.Icon(Properties.Resources.error_plusminus, size), at);
                 else if (i > 0 && j > 0)
-                    e.Graphics.DrawImage(Properties.Resources.error_plus, imageRect);
+                    e.Graphics.DrawImage(Dpi.Icon(Properties.Resources.error_plus, size), at);
             }
         }
 
@@ -596,9 +568,7 @@ namespace s3mo
 
             if (hit.Item != null)
             {
-                PackageModel? packageModel = _modModel.PackageModels.Find(p => hit.Item.Text.Equals(p.Name));
-
-                if (packageModel == null)
+                if (!_modModel.TryGetPackageModel(hit.Item.Text, out PackageModel packageModel) || packageModel.LoadError != null)
                     return;
 
                 ModForm form = new ModForm(packageModel);
