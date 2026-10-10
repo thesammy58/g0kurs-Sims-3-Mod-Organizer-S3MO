@@ -159,6 +159,20 @@ namespace s3mo
             {
                 MessageBox.Show(ex.Message, "Could not copy 'modlist.txt'", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+
+            // The folders switched off inside mods belong to the profile too
+            string sourceFolders = Path.Combine(exePath, "Profiles", selected, "disabledfolders.txt");
+            if (File.Exists(sourceFolders))
+            {
+                try
+                {
+                    File.Copy(sourceFolders, Path.Combine(exePath, "Profiles", newProfile, "disabledfolders.txt"));
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.Message, "Could not copy 'disabledfolders.txt'", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
     }
 }

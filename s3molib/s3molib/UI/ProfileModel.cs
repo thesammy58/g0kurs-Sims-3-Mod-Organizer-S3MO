@@ -18,6 +18,13 @@ namespace s3molib
         public bool TryGetModModel(string modName, out ModModel modModel) => _modModelLookup.TryGetValue(modName, out modModel);
         private Dictionary<string, ModModel> _modModelLookup = new Dictionary<string, ModModel>();
 
+        // Folders inside mods that are switched off in this profile, as "Mod name\folder\subfolder".
+        // Kept in Profiles\<profile>\disabledfolders.txt so modlist.txt stays readable by older versions.
+        private const string DisabledFoldersFile = "disabledfolders.txt";
+        private readonly HashSet<string> _disabledFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private static string FolderKey(ModModel mod, string relativeFolder) => Path.Combine(mod.Name, relativeFolder);
+
         /// <param name="rootPath">Folder containing Mods and Profiles (defaults to the program folder).</param>
         public ProfileModel(string rootPath = null)
         {
@@ -74,15 +81,88 @@ namespace s3molib
             foreach (string remainingMod in rest)
                 _modModelLookup[remainingMod].Update(remainingMod, false, i++);
 
+            _disabledFolders.Clear();
+            string disabledPath = Path.Combine(profilePath, DisabledFoldersFile);
+            if (File.Exists(disabledPath))
+            {
+                foreach (string raw in File.ReadAllLines(disabledPath))
+                {
+                    string line = raw.Trim();
+                    int sep = line.IndexOfAny(new[] { '\\', '/' });
+                    if (sep <= 0 || !_modModelLookup.TryGetValue(line.Substring(0, sep), out ModModel mod))
+                        continue;
+                    string rel = line.Substring(sep + 1).Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+                    if (mod.FindFolder(rel) != null)
+                        _disabledFolders.Add(FolderKey(mod, rel));
+                }
+            }
+
             if (save)
                 Save(profileName);
         }
+
+        // ------------------------------------------------------------------ folders switched off inside mods
+
+        /// <summary>The folder's own check box (not whether its mod or a parent folder is on).</summary>
+        public bool IsFolderEnabled(ModModel mod, string relativeFolder) =>
+            string.IsNullOrEmpty(relativeFolder) ? mod.Enabled : !_disabledFolders.Contains(FolderKey(mod, relativeFolder));
+
+        public void SetFolderEnabled(ModModel mod, string relativeFolder, bool enabled)
+        {
+            if (string.IsNullOrEmpty(relativeFolder))
+                return;
+            if (enabled)
+                _disabledFolders.Remove(FolderKey(mod, relativeFolder));
+            else
+                _disabledFolders.Add(FolderKey(mod, relativeFolder));
+        }
+
+        /// <summary>True when the mod and every folder on the way down to this one are switched on.</summary>
+        public bool IsFolderEffectivelyEnabled(ModModel mod, string relativeFolder)
+        {
+            if (!mod.Enabled)
+                return false;
+            for (string dir = relativeFolder; !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
+                if (_disabledFolders.Contains(FolderKey(mod, dir)))
+                    return false;
+            return true;
+        }
+
+        /// <summary>True when some folder below this one (or below the mod, for an empty path) is switched off.</summary>
+        public bool HasDisabledFoldersBelow(ModModel mod, string relativeFolder)
+        {
+            string prefix = FolderKey(mod, relativeFolder ?? string.Empty);
+            if (!prefix.EndsWith(Path.DirectorySeparatorChar))
+                prefix += Path.DirectorySeparatorChar;
+            foreach (string key in _disabledFolders)
+                if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
+        }
+
+        /// <summary>A copy of the switched-off folders, for work on another thread.</summary>
+        public HashSet<string> SnapshotDisabledFolders() => new HashSet<string>(_disabledFolders, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>True when the package sits in a folder that is switched off (its mod's own state isn't considered).</summary>
+        public static bool IsInDisabledFolder(PackageModel p, ISet<string> disabledFolders)
+        {
+            if (disabledFolders.Count == 0)
+                return false;
+            for (string dir = ModModel.FolderOf(p); !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
+                if (disabledFolders.Contains(FolderKey(p.ModModel, dir)))
+                    return true;
+            return false;
+        }
+
+        /// <summary>True when the package goes into the build: its mod is on and none of its folders is switched off.</summary>
+        public bool IsPackageIncluded(PackageModel p) => p.ModModel.Enabled && !IsInDisabledFolder(p, _disabledFolders);
 
         /// <summary>
         /// Reads every package index (from the cache where possible) and works out all conflicts in one pass.
         /// Safe to run on a background thread; call <see cref="ApplyAnalysis"/> on the UI thread with the result.
         /// </summary>
-        public AnalysisResult Analyze(PackageCache cache, CancellationToken cancellationToken = default)
+        /// <param name="disabledFolders">Snapshot from <see cref="SnapshotDisabledFolders"/> taken on the UI thread; packages in those folders are left out of the conflict check.</param>
+        public AnalysisResult Analyze(PackageCache cache, CancellationToken cancellationToken = default, ISet<string> disabledFolders = null)
         {
             var result = new AnalysisResult();
             var all = new List<PackageModel>();
@@ -113,7 +193,8 @@ namespace s3molib
             result.PackageCount = all.Count;
             result.FailedCount = failed;
             result.CacheHits = cache?.Hits ?? 0;
-            result.Conflicts = ConflictAnalyzer.Analyze(_modModelLookup.Values);
+            ISet<string> excluded = disabledFolders ?? SnapshotDisabledFolders();
+            result.Conflicts = ConflictAnalyzer.Analyze(_modModelLookup.Values, excluded.Count == 0 ? null : p => !IsInDisabledFolder(p, excluded));
             cache?.Save();
             return result;
         }
@@ -137,6 +218,22 @@ namespace s3molib
                 lines.Add((mod.Enabled ? "+" : "-") + mod.Name);
 
             File.WriteAllLines(modListPath, lines);
+
+            string disabledPath = Path.Combine(profilePath, DisabledFoldersFile);
+            if (_disabledFolders.Count > 0 || File.Exists(disabledPath))
+            {
+                List<string> folders = new List<string>(_disabledFolders);
+                folders.Sort(StringComparer.OrdinalIgnoreCase);
+                File.WriteAllLines(disabledPath, folders.ConvertAll(f => f.Replace(Path.DirectorySeparatorChar, '\\')));
+            }
+        }
+
+        /// <summary>Rewrites the mod-name part of switched-off folder entries ("Old\x" becomes "New\x").</summary>
+        private static string RenameFolderEntry(string entry, string oldName, string newName)
+        {
+            if (entry.Length > oldName.Length && entry.StartsWith(oldName, StringComparison.OrdinalIgnoreCase) && (entry[oldName.Length] == '\\' || entry[oldName.Length] == '/'))
+                return newName + entry.Substring(oldName.Length);
+            return entry;
         }
 
         public void RenameMod(string oldName, string newName)
@@ -167,12 +264,24 @@ namespace s3molib
                 string[] lines = File.ReadAllLines(modListPath);
 
                 int i = Array.FindIndex(lines, l => l.Length > 1 && l.Substring(1).Equals(oldName));
-                if (i < 0)
-                    continue;
-                lines[i] = lines[i].Substring(0, 1) + newName;
+                if (i >= 0)
+                {
+                    lines[i] = lines[i].Substring(0, 1) + newName;
+                    File.WriteAllLines(modListPath, lines);
+                }
 
-                File.WriteAllLines(modListPath, lines);
+                string disabledPath = Path.Combine(path, DisabledFoldersFile);
+                if (File.Exists(disabledPath))
+                {
+                    string[] entries = File.ReadAllLines(disabledPath);
+                    File.WriteAllLines(disabledPath, Array.ConvertAll(entries, e => RenameFolderEntry(e, oldName, newName)));
+                }
             }
+
+            var renamed = new List<string>(_disabledFolders);
+            _disabledFolders.Clear();
+            foreach (string e in renamed)
+                _disabledFolders.Add(RenameFolderEntry(e, oldName, newName));
         }
 
         public string CreateEmptyMod()
@@ -200,11 +309,12 @@ namespace s3molib
             Directory.Delete(modModel.FolderPath, true);
 
             _modModelLookup.Remove(modName);
+            _disabledFolders.RemoveWhere(e => RenameFolderEntry(e, modName, "?") != e);
         }
 
         /// <summary>
         /// The packages of enabled mods in merge order: mods by priority, then packages by name.
-        /// Later entries win conflicts. Packages that couldn't be read are returned separately.
+        /// Later entries win conflicts. Packages in switched-off folders are left out; packages that couldn't be read are returned separately.
         /// </summary>
         public List<PackageModel> GetPackagesInBuildOrder(out List<PackageModel> unreadable)
         {
@@ -216,6 +326,8 @@ namespace s3molib
             foreach (ModModel mod in mods)
                 foreach (PackageModel p in mod.GetSortedPackages())
                 {
+                    if (IsInDisabledFolder(p, _disabledFolders))
+                        continue;
                     if (p.LoadError != null)
                         unreadable.Add(p);
                     else

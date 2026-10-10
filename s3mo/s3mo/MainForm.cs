@@ -54,6 +54,9 @@ namespace s3mo
                     _toolbarIcons[b] = b.Image;
 
             SetupBuildButtonMenu();
+            SetupModListContextMenu();
+            modListView.ExpandRequested += modListView_ExpandRequested;
+            LoadExpandedRows();
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -80,6 +83,7 @@ namespace s3mo
             Settings.SetSettings("WindowFileListViewFileHeaderWidth", fileHeader.Width);
             Settings.SetSettings("WindowFileListViewFlagHeaderWidth", fileFlagHeader.Width);
             Dpi.SaveLayoutDpi("Window", this);
+            SaveExpandedRows();
 
             Logger.InfoLoggedEvent -= EnqueueLog;
             Logger.WarningLoggedEvent -= EnqueueLog;
@@ -174,33 +178,8 @@ namespace s3mo
             if (setupModel)
                 _profileModel.Setup(_currentProfile);
 
-            List<ModModel> mods = _profileModel.ModModels;
-            mods.Sort(new ModModelComparer(ModModelComparer.SortBy.Priority));
-
-            _populatingModList = true;
-            modListView.BeginUpdate();
-            try
-            {
-                modListView.Items.Clear();
-                fileListView.Items.Clear();
-
-                int displayIndex = 0;
-                List<ListViewItem> items = new List<ListViewItem>(mods.Count);
-                foreach (ModModel m in mods)
-                {
-                    ListViewItem item = new ListViewItem(m.Name);
-                    item.Checked = m.Enabled;
-                    item.SubItems.Add(string.Empty); // Placeholder for icon, else will throw exception.
-                    item.SubItems.Add(m.Enabled ? (displayIndex++).ToString() : string.Empty);
-                    items.Add(item);
-                }
-                modListView.Items.AddRange(items.ToArray());
-            }
-            finally
-            {
-                modListView.EndUpdate();
-                _populatingModList = false;
-            }
+            _folderFlagCache.Clear();
+            RebuildModRows();
 
             string[] profiles = Directory.GetDirectories(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles"));
             Array.Sort(profiles, new NumericComparer());
@@ -210,9 +189,9 @@ namespace s3mo
                 profileComboBox.Items.Add(Path.GetFileName(path));
 
             profileComboBox.SelectedItem = _currentProfile;
-            FitNameColumns();
         }
 
+        /// <summary>Stores the mod order shown in the list (folder rows don't count) and renumbers the enabled mods.</summary>
         private void UpdateModModelPriority()
         {
             int realIndex = 0; // Used so that the order is preserved when saved in modlist.txt
@@ -220,8 +199,9 @@ namespace s3mo
 
             foreach (ListViewItem item in modListView.Items)
             {
-                if (!_profileModel.TryGetModModel(item.Text, out ModModel mod))
+                if (RowOf(item) is not ModRow row || !row.IsMod)
                     continue;
+                ModModel mod = row.Mod;
                 mod.Update(mod.Name, mod.Enabled, realIndex);
 
                 if (mod.Enabled)
@@ -232,6 +212,8 @@ namespace s3mo
                 realIndex++;
             }
             _profileModel.Save(_currentProfile);
+            _folderFlagCache.Clear();
+            modListView.Invalidate();
 
             ValidateModBuild();
         }
@@ -245,7 +227,8 @@ namespace s3mo
             _currentProfile = profileName;
             Settings.SetSettings("Profile", _currentProfile);
             RefreshListViews();
-            ValidateModBuild();
+            StartAnalysis(); // each profile has its own switched-off folders, so conflicts can differ
+
         }
 
         private void aboutButton_Click(object sender, EventArgs e)
@@ -324,7 +307,7 @@ namespace s3mo
             {
                 RefreshListViews();
                 this.Enabled = true;
-                ValidateModBuild();
+                StartAnalysis();
             };
             form.Show();
         }

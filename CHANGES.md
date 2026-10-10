@@ -55,6 +55,15 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
 
 - **Packages in subfolders:** packages in subfolders of a mod (e.g. `Mods\Hair Pack\Female\hair.package`) are now found. They're shown with their folder and included in conflict checks and builds. Inside a mod, packages are merged in name order as before, now including the folder part.
 - **Zip installs:** installing a zip keeps its folders. Before, files inside folders in a zip were silently dropped.
+- **Folders in the mod list:** a mod with subfolders gets an arrow in the mod list. Opening it shows the folders as indented rows, each with its own check box. Click the arrow, double-click a folder, or use the Right/Left arrow keys to open and close them.
+  - Unticking a folder leaves it and everything below it out of builds and conflict checks.
+  - A mod with some folders switched off shows a partly ticked box.
+  - Switching a mod off and on again keeps its folder choices.
+  - The Files panel only shows the files directly inside the selected mod or folder, not the whole mod at once. Files that won't be built are greyed out.
+  - Selecting a folder colours the mods that its own packages conflict with, and folder rows show their own conflict icons.
+  - The order is still set per mod: drag mods (not folders) to reorder them. Dropping below the last row moves them to the end.
+  - Switched-off folders are saved per profile in `Profiles\<name>\disabledfolders.txt`. `modlist.txt` is unchanged, so older versions can still read it. Copying a profile copies this file too.
+- **Moved files aren't rewritten:** moving packages between folders (or between mods) is recognised by file name, size and last-modified time. If a moved package still wins the same resources, nothing is written. Before, reorganising folders made the build treat every moved file as new, which showed up as unused space and could trigger a full rebuild.
 
 ## High DPI
 

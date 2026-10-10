@@ -95,18 +95,56 @@ namespace s3mo
         }
 
         /// <summary>Draws a themed check box scaled to the given rectangle.</summary>
-        public static void DrawCheckBox(Graphics g, Rectangle box, bool isChecked)
+        public static void DrawCheckBox(Graphics g, Rectangle box, bool isChecked) => DrawCheckBox(g, box, isChecked ? CheckState.Checked : CheckState.Unchecked, true);
+
+        /// <summary>Draws a themed check box (ticked, empty or partly ticked; greyed when not enabled) scaled to the rectangle.</summary>
+        public static void DrawCheckBox(Graphics g, Rectangle box, CheckState state, bool enabled)
         {
             if (Application.RenderWithVisualStyles)
             {
-                VisualStyleElement element = isChecked ? VisualStyleElement.Button.CheckBox.CheckedNormal : VisualStyleElement.Button.CheckBox.UncheckedNormal;
+                VisualStyleElement element = (state, enabled) switch
+                {
+                    (CheckState.Checked, true) => VisualStyleElement.Button.CheckBox.CheckedNormal,
+                    (CheckState.Checked, false) => VisualStyleElement.Button.CheckBox.CheckedDisabled,
+                    (CheckState.Indeterminate, true) => VisualStyleElement.Button.CheckBox.MixedNormal,
+                    (CheckState.Indeterminate, false) => VisualStyleElement.Button.CheckBox.MixedDisabled,
+                    (_, true) => VisualStyleElement.Button.CheckBox.UncheckedNormal,
+                    _ => VisualStyleElement.Button.CheckBox.UncheckedDisabled,
+                };
                 if (VisualStyleRenderer.IsElementDefined(element))
                 {
                     new VisualStyleRenderer(element).DrawBackground(g, box);
                     return;
                 }
             }
-            ControlPaint.DrawCheckBox(g, box, (isChecked ? ButtonState.Checked : ButtonState.Normal) | ButtonState.Flat);
+            if (state == CheckState.Indeterminate)
+                ControlPaint.DrawMixedCheckBox(g, box, ButtonState.Checked | ButtonState.Flat | (enabled ? 0 : ButtonState.Inactive));
+            else
+                ControlPaint.DrawCheckBox(g, box, (state == CheckState.Checked ? ButtonState.Checked : ButtonState.Normal) | ButtonState.Flat | (enabled ? 0 : ButtonState.Inactive));
+        }
+
+        /// <summary>
+        /// Draws the expand/collapse arrow of a tree row: a chevron like Explorer's, pointing right when closed and
+        /// down when open. It's drawn as lines sized to the rectangle (theme glyphs come in fixed pixel sizes that
+        /// don't follow per-monitor scaling), in the row's text color so it shows on selected rows too.
+        /// </summary>
+        public static void DrawExpandGlyph(Graphics g, Rectangle r, bool expanded, Color color)
+        {
+            float half = r.Width * 0.18f;            // half the chevron's long side
+            float cx = r.X + r.Width / 2f, cy = r.Y + r.Height / 2f;
+            PointF[] pts = expanded
+                ? new[] { new PointF(cx - half * 1.6f, cy - half * 0.8f), new PointF(cx, cy + half * 0.8f), new PointF(cx + half * 1.6f, cy - half * 0.8f) }
+                : new[] { new PointF(cx - half * 0.8f, cy - half * 1.6f), new PointF(cx + half * 0.8f, cy), new PointF(cx - half * 0.8f, cy + half * 1.6f) };
+
+            var oldMode = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (Pen pen = new Pen(Color.FromArgb(200, color), Math.Max(1f, r.Width / 10f)))
+            {
+                pen.StartCap = pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                pen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
+                g.DrawLines(pen, pts);
+            }
+            g.SmoothingMode = oldMode;
         }
 
         public const TextFormatFlags CellText = TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;

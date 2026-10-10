@@ -6,6 +6,24 @@ using ns;
 
 namespace s3molib
 {
+    /// <summary>A folder inside a mod (the mod folder itself is the root, with an empty path).</summary>
+    public sealed class FolderNode
+    {
+        public string Name { get; }
+        /// <summary>Path relative to the mod folder, e.g. "Female\Hair"; empty for the mod folder itself.</summary>
+        public string RelativePath { get; }
+        public FolderNode Parent { get; }
+        public List<FolderNode> Children { get; } = new List<FolderNode>();
+        public int Depth => Parent == null ? 0 : Parent.Depth + 1;
+
+        internal FolderNode(string name, string relativePath, FolderNode parent)
+        {
+            Name = name;
+            RelativePath = relativePath;
+            Parent = parent;
+        }
+    }
+
     public class ModModel
     {
         public string FolderPath { get; private set; }
@@ -38,10 +56,17 @@ namespace s3molib
             }
         }
 
+        /// <summary>The mod folder and its subfolders, sorted by name.</summary>
+        public FolderNode RootFolder { get; private set; }
+        private readonly Dictionary<string, FolderNode> _folders = new Dictionary<string, FolderNode>(StringComparer.OrdinalIgnoreCase);
+
+        public FolderNode FindFolder(string relativePath) => _folders.TryGetValue(relativePath ?? string.Empty, out FolderNode f) ? f : null;
+
         public ModModel(string path)
         {
             FolderPath = path;
             Name = Path.GetFileName(path);
+            BuildFolderTree();
 
             // Packages may live in subfolders of the mod folder; they're identified by their path relative to the mod folder.
             foreach (string filePath in EnumeratePackages(path))
@@ -50,6 +75,72 @@ namespace s3molib
                 PackageModel packageModel = new PackageModel(this, filePath, relative);
                 _packageModelLookup[relative] = packageModel;
             }
+        }
+
+        private void BuildFolderTree()
+        {
+            RootFolder = new FolderNode(Name, string.Empty, null);
+            _folders[string.Empty] = RootFolder;
+            if (!Directory.Exists(FolderPath))
+                return;
+
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
+            };
+            var relatives = new List<string>();
+            foreach (string dir in Directory.EnumerateDirectories(FolderPath, "*", options))
+                relatives.Add(Path.GetRelativePath(FolderPath, dir));
+            relatives.Sort((a, b) => a.Length != b.Length ? a.Length.CompareTo(b.Length) : string.CompareOrdinal(a, b)); // parents first
+
+            foreach (string rel in relatives)
+            {
+                string parentRel = Path.GetDirectoryName(rel) ?? string.Empty;
+                if (!_folders.TryGetValue(parentRel, out FolderNode parent))
+                    continue; // inside a skipped (hidden) folder
+                var node = new FolderNode(Path.GetFileName(rel), rel, parent);
+                parent.Children.Add(node);
+                _folders[rel] = node;
+            }
+            foreach (FolderNode f in _folders.Values)
+                f.Children.Sort((a, b) => StringLogicalComparer.Compare(a.Name, b.Name));
+        }
+
+        /// <summary>Folder (relative to the mod) that a package sits in; empty for the mod folder itself.</summary>
+        public static string FolderOf(PackageModel p) => Path.GetDirectoryName(p.Name) ?? string.Empty;
+
+        /// <summary>Packages directly in the given folder (not in its subfolders), sorted by name.</summary>
+        public List<PackageModel> GetPackagesIn(string relativeFolder)
+        {
+            List<PackageModel> list = PackageModels.FindAll(p => string.Equals(FolderOf(p), relativeFolder ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+            list.Sort(PackageModel.CompareByName);
+            return list;
+        }
+
+        /// <summary>Packages in the given folder and all its subfolders.</summary>
+        public List<PackageModel> GetPackagesUnder(string relativeFolder)
+        {
+            if (string.IsNullOrEmpty(relativeFolder))
+                return PackageModels;
+            string prefix = relativeFolder + Path.DirectorySeparatorChar;
+            return PackageModels.FindAll(p => p.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Non-package files directly in the given folder, relative to the mod folder.</summary>
+        public List<string> GetOtherFilesIn(string relativeFolder)
+        {
+            var result = new List<string>();
+            string dir = Path.Combine(FolderPath, relativeFolder ?? string.Empty);
+            if (!Directory.Exists(dir))
+                return result;
+            var options = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.Hidden | FileAttributes.System };
+            foreach (string f in Directory.EnumerateFiles(dir, "*", options))
+                if (!f.EndsWith(".package", StringComparison.OrdinalIgnoreCase))
+                    result.Add(Path.GetRelativePath(FolderPath, f));
+            result.Sort(StringLogicalComparer.Compare);
+            return result;
         }
 
         /// <summary>All .package files in the folder and its subfolders (case-insensitive, hidden folders skipped).</summary>

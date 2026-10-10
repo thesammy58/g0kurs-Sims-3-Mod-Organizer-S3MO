@@ -20,10 +20,11 @@ namespace s3mo
             Task previous = _analysisTask;
             _scanning = true;
             refreshButton.Enabled = false;
-            _analysisTask = RunAnalysisAsync(generation, _profileModel, previous);
+            // Which folders are switched off is read here, on the UI thread, while the scan runs in the background.
+            _analysisTask = RunAnalysisAsync(generation, _profileModel, _profileModel.SnapshotDisabledFolders(), previous);
         }
 
-        private async Task RunAnalysisAsync(int generation, ProfileModel model, Task previous)
+        private async Task RunAnalysisAsync(int generation, ProfileModel model, HashSet<string> disabledFolders, Task previous)
         {
             try { await previous; } catch { /* reported by that run */ }
 
@@ -35,7 +36,7 @@ namespace s3mo
             AnalysisResult result;
             try
             {
-                result = await Task.Run(() => model.Analyze(_packageCache));
+                result = await Task.Run(() => model.Analyze(_packageCache, default, disabledFolders));
             }
             catch (Exception ex)
             {
@@ -53,6 +54,7 @@ namespace s3mo
                 return;
 
             model.ApplyAnalysis(result);
+            _folderFlagCache.Clear();
             _scanning = false;
             refreshButton.Enabled = true;
             HideStatus();

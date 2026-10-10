@@ -88,6 +88,7 @@ public static class Program
         foreach (int seed in new[] { 11, 12, 13, 14 })
             TestIncremental(work, seed, compactThreshold: seed % 2 == 0 ? 1.0 : 0.25);
         TestMovedPackages(work);
+        TestDisabledFolders(work);
         TestTamperDetection(work);
     }
 
@@ -706,6 +707,83 @@ public static class Program
             Check(SameContent(Effective(build, out _), Effective(reference, out _)), $"seed {seed}: content after moves == full build");
             Console.WriteLine($"  seed {seed}: moved {files.Length / 3}ish packages, rewrote {expected / 1024} KB of {total / 1024} KB");
         }
+    }
+
+    static void TestDisabledFolders(string work)
+    {
+        Console.WriteLine("Switching folders inside mods on and off");
+        string root = Path.Combine(work, "folders");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var rnd = new Random(9);
+        var pool = Synthetic.MakePool(rnd, 30);
+        string items = Path.Combine(root, "Mods", "CAS Items");
+        string other = Path.Combine(root, "Mods", "Other");
+        // every package shares keys with "Other", so conflicts show up wherever a package is enabled
+        List<Synthetic.Res> Conflicting(int n) { var r = Synthetic.MakeResources(rnd, n, 10, 200, pool, 0); for (int i = 0; i < r.Count; i++) { var k = pool[i % pool.Count]; r[i].Type = k.Item1; r[i].Group = k.Item2; r[i].Instance = k.Item3; } return r.GroupBy(x => (x.Type, x.Group, x.Instance)).Select(g => g.First()).ToList(); }
+        Synthetic.Write(Path.Combine(items, "top.package"), Synthetic.MakeResources(rnd, 5, 10, 100, pool, 0));
+        Synthetic.Write(Path.Combine(items, "Female", "hair.package"), Conflicting(10));
+        Synthetic.Write(Path.Combine(items, "Female", "Hair", "Long", "long.package"), Synthetic.MakeResources(rnd, 6, 10, 100, pool, 0));
+        Synthetic.Write(Path.Combine(items, "Male", "beard.package"), Synthetic.MakeResources(rnd, 7, 10, 100, pool, 0));
+        Directory.CreateDirectory(Path.Combine(items, "Empty"));
+        Synthetic.Write(Path.Combine(other, "other.package"), Conflicting(30));
+        Directory.CreateDirectory(Path.Combine(root, "Profiles", "Default"));
+        File.WriteAllLines(Path.Combine(root, "Profiles", "Default", "modlist.txt"), new[] { "+CAS Items", "+Other" });
+        string F(params string[] parts) => Path.Combine(parts);
+
+        var p = new ProfileModel(root); p.Setup("Default");
+        var mod = p.GetModModel("CAS Items");
+        Check(mod.RootFolder.Children.Select(c => c.Name).SequenceEqual(new[] { "Empty", "Female", "Male" }), "folder tree top level");
+        Check(mod.FindFolder(F("Female", "Hair", "Long"))?.Depth == 3, "nested folder depth");
+        Check(mod.GetPackagesIn("").Count == 1 && mod.GetPackagesIn("Female").Count == 1 && mod.GetPackagesUnder("Female").Count == 2, "packages per folder");
+
+        p.ApplyAnalysis(p.Analyze(null));
+        Check(mod.ConflictingModModels.Count == 1, "conflict through Female\\hair.package");
+        Check(p.GetPackagesInBuildOrder(out _).Count == 5, "all 5 packages in the build");
+
+        p.SetFolderEnabled(mod, "Female", false);
+        p.Save("Default");
+        Check(File.ReadAllText(Path.Combine(root, "Profiles", "Default", "disabledfolders.txt")).Trim() == "CAS Items\\Female", "saved as 'CAS Items\\Female'");
+        Check(File.ReadAllLines(Path.Combine(root, "Profiles", "Default", "modlist.txt")).SequenceEqual(new[] { "+CAS Items", "+Other" }), "modlist.txt unchanged format");
+
+        p = new ProfileModel(root); p.Setup("Default");
+        mod = p.GetModModel("CAS Items");
+        Check(!p.IsFolderEnabled(mod, "Female") && p.IsFolderEnabled(mod, F("Female", "Hair")), "own state reloaded");
+        Check(!p.IsFolderEffectivelyEnabled(mod, F("Female", "Hair", "Long")) && p.IsFolderEffectivelyEnabled(mod, "Male"), "effective state follows parents");
+        Check(p.HasDisabledFoldersBelow(mod, "") && !p.HasDisabledFoldersBelow(mod, "Male"), "partly-on detection");
+        var build = p.GetPackagesInBuildOrder(out _).Select(x => x.Name).ToList();
+        Check(build.Count == 3 && !build.Any(n => n.StartsWith("Female")), "Female folder left out of the build: " + string.Join(", ", build));
+        p.ApplyAnalysis(p.Analyze(null));
+        Check(mod.ConflictingModModels.Count == 0, "no conflicts once the conflicting folder is off");
+
+        // turning the mod off and on keeps the folder choice
+        mod.Update(mod.Name, false, mod.Priority); p.Save("Default");
+        mod.Update(mod.Name, true, mod.Priority); p.Save("Default");
+        Check(!p.IsFolderEnabled(mod, "Female"), "folder choice survives mod off/on");
+
+        // incremental build drops exactly those resources
+        string buildDir = Path.Combine(root, "S", "ModBuilds");
+        var cache = new PackageCache(Path.Combine(root, "c"), Path.Combine(root, "Mods"));
+        p.SetFolderEnabled(mod, "Female", true);
+        ModBuilder.Build(buildDir, SourcesFor(p, cache), new BuildOptions { CompactThreshold = 1 });
+        p.SetFolderEnabled(mod, "Female", false);
+        var srcs = SourcesFor(p, cache);
+        var res = ModBuilder.Build(buildDir, srcs, new BuildOptions { CompactThreshold = 1 });
+        Check(!res.Plan.FullRebuild && res.Plan.Removed + res.Plan.Replaced > 0, "folder off -> incremental update: " + res.Plan);
+        string reference = Path.Combine(root, "R", "ModBuilds");
+        ModBuilder.Build(reference, srcs, new BuildOptions { ForceFullRebuild = true });
+        Check(SameContent(Effective(buildDir, out _), Effective(reference, out _)), "content matches a full build without the folder");
+
+        // renaming the mod carries the folder setting along
+        p.Save("Default");
+        p.RenameMod("CAS Items", "CAS Stuff");
+        p = new ProfileModel(root); p.Setup("Default");
+        var renamed = p.GetModModel("CAS Stuff");
+        Check(!p.IsFolderEnabled(renamed, "Female") && p.GetPackagesInBuildOrder(out _).Count == 3, "folder setting follows a rename");
+
+        // entries for folders that no longer exist are dropped
+        Directory.Move(Path.Combine(root, "Mods", "CAS Stuff", "Female"), Path.Combine(root, "Mods", "CAS Stuff", "Women"));
+        p = new ProfileModel(root); p.Setup("Default");
+        Check(!p.HasDisabledFoldersBelow(p.GetModModel("CAS Stuff"), ""), "stale entry dropped after the folder was renamed");
     }
 
     static void TestTamperDetection(string work)

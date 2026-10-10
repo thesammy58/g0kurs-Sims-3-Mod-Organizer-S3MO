@@ -59,6 +59,14 @@ namespace s3molib
         private HashSet<PackageModel> _conflictingPackageModelsInModModel = new HashSet<PackageModel>();
 
         public List<string> GetConflictingResources() => new List<string>(_resourceOtherPackageModelsLookup.Keys);
+
+        /// <summary>Packages in other mods that share a resource with this one (may repeat a package).</summary>
+        public IEnumerable<PackageModel> GetConflictingPackagesInOtherMods()
+        {
+            foreach (List<PackageModel> list in _resourceOtherPackageModelsLookup.Values)
+                foreach (PackageModel p in list)
+                    yield return p;
+        }
         public List<PackageModel> GetConflictingPackageModelsByResource(string key) => _resourceOtherPackageModelsLookup[key];
         private Dictionary<string, List<PackageModel>> _resourceOtherPackageModelsLookup = new Dictionary<string, List<PackageModel>>();
 

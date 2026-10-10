@@ -13,8 +13,10 @@ namespace s3mo
         List<string> fileListView_conflictLosingPackageModel = new List<string>();
         List<string> fileListView_conflictWinningPackageModel = new List<string>();
 
-        private ModModel? SelectedMod =>
-            modListView.SelectedItems.Count == 1 && _profileModel.TryGetModModel(modListView.SelectedItems[0].Text, out ModModel m) ? m : null;
+        private ModModel? SelectedMod => SelectedRow?.Mod;
+
+        /// <summary>A file row shows the file name; its path inside the mod (e.g. "Hair\bob.package") is in Tag.</summary>
+        private static string FileKey(ListViewItem item) => item.Tag as string ?? item.Text;
 
         private void fileListView_ItemSelectionChanged(object sender, ListViewItemSelectionChangedEventArgs e)
         {
@@ -28,7 +30,7 @@ namespace s3mo
                 return;
             }
 
-            if (!modModel.TryGetPackageModel(fileListView.SelectedItems[0].Text, out PackageModel packageModel))
+            if (!modModel.TryGetPackageModel(FileKey(fileListView.SelectedItems[0]), out PackageModel packageModel))
             {
                 fileListView.Invalidate();
                 return;
@@ -54,21 +56,23 @@ namespace s3mo
                 return;
 
             Color back = e.Item.Selected ? SystemColors.Highlight
-                : fileListView_conflictLosingPackageModel.Contains(e.Item.Text) ? Color.LightGreen
-                : fileListView_conflictWinningPackageModel.Contains(e.Item.Text) ? Color.LightCoral
+                : fileListView_conflictLosingPackageModel.Contains(FileKey(e.Item)) ? Color.LightGreen
+                : fileListView_conflictWinningPackageModel.Contains(FileKey(e.Item)) ? Color.LightCoral
                 : (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
             Dpi.FillCell(e.Graphics, e.Bounds, back);
 
             if (e.ColumnIndex == 0)
             {
                 Rectangle text = Rectangle.FromLTRB(e.Bounds.Left + LogicalToDeviceUnits(5), e.Bounds.Top, e.Bounds.Right, e.Bounds.Bottom);
-                Color color = e.Item.Selected ? SystemColors.HighlightText : SystemColors.ControlText;
+                // Files in a switched-off folder (or a switched-off mod) are greyed out: they won't be built.
+                bool active = SelectedRow is ModRow row && row.Mod.Enabled && _profileModel.IsFolderEffectivelyEnabled(row.Mod, row.RelativeFolder);
+                Color color = e.Item.Selected ? SystemColors.HighlightText : active ? SystemColors.ControlText : SystemColors.GrayText;
                 TextRenderer.DrawText(e.Graphics, e.SubItem.Text, fileListView.Font, text, color, Dpi.CellText | TextFormatFlags.Left);
             }
             else if (e.ColumnIndex == 1)
             {
                 ModModel? modModel = SelectedMod;
-                if (modModel == null || !modModel.TryGetPackageModel(e.Item.Text, out PackageModel packageModel))
+                if (modModel == null || !modModel.TryGetPackageModel(FileKey(e.Item), out PackageModel packageModel))
                     return;
 
                 int size = LogicalToDeviceUnits(16);
@@ -106,10 +110,10 @@ namespace s3mo
             ListViewHitTestInfo info = fileListView.HitTest(e.X, e.Y);
             ListViewItem listViewItem = info.Item;
 
-            if (listViewItem == null || !listViewItem.Text.EndsWith(".package", StringComparison.OrdinalIgnoreCase))
+            if (listViewItem == null || !FileKey(listViewItem).EndsWith(".package", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            if (!modModel.TryGetPackageModel(listViewItem.Text, out PackageModel packageModel))
+            if (!modModel.TryGetPackageModel(FileKey(listViewItem), out PackageModel packageModel))
                 return;
 
             this.Enabled = false;

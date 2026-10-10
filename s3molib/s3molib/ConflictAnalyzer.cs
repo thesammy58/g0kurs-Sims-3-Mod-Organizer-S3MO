@@ -13,7 +13,8 @@ namespace s3molib
     /// </summary>
     public static class ConflictAnalyzer
     {
-        public static ConflictResult Analyze(IEnumerable<ModModel> mods)
+        /// <param name="include">Packages to take into account (e.g. not in a disabled folder); all when null.</param>
+        public static ConflictResult Analyze(IEnumerable<ModModel> mods, Func<PackageModel, bool> include = null)
         {
             // Stable order (priority, then package name) so the per-resource lists come out in priority order.
             List<ModModel> modList = new List<ModModel>(mods);
@@ -27,7 +28,7 @@ namespace s3molib
             {
                 foreach (PackageModel pm in mod.GetSortedPackages())
                 {
-                    if (pm.LoadError != null || !pm.IsLoaded)
+                    if (pm.LoadError != null || !pm.IsLoaded || (include != null && !include(pm)))
                         continue;
 
                     foreach (ResourceEntry e in pm.Package.Entries)
