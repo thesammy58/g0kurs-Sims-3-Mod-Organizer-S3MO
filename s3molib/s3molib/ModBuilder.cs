@@ -159,14 +159,25 @@ namespace s3molib
                 keptByFile[f] = new List<BuildState.Entry>();
 
             // Which current source (if any) is the same, unchanged file as each source of the previous build.
+            // First by path; then, for files that were moved or their mod folder renamed, by file name + size +
+            // last-write time (a move keeps all three), so reorganizing folders doesn't rewrite unchanged data.
             var currentById = new Dictionary<string, int>(sources.Count, StringComparer.OrdinalIgnoreCase);
+            var currentByFile = new Dictionary<string, int>(sources.Count, StringComparer.OrdinalIgnoreCase);
             for (int s = 0; s < sources.Count; s++)
+            {
                 currentById[sources[s].Id] = s;
+                currentByFile.TryAdd(FileFingerprint(sources[s].Id, sources[s].Size, sources[s].LastWriteTicks), s);
+            }
             int[] sameSource = new int[state.Sources.Count];
             for (int s = 0; s < state.Sources.Count; s++)
             {
                 BuildState.SourceRecord old = state.Sources[s];
-                sameSource[s] = currentById.TryGetValue(old.Id, out int c) && sources[c].Size == old.Size && sources[c].LastWriteTicks == old.LastWriteTicks ? c : -1;
+                if (currentById.TryGetValue(old.Id, out int c) && sources[c].Size == old.Size && sources[c].LastWriteTicks == old.LastWriteTicks)
+                    sameSource[s] = c;
+                else if (currentByFile.TryGetValue(FileFingerprint(old.Id, old.Size, old.LastWriteTicks), out c))
+                    sameSource[s] = c;
+                else
+                    sameSource[s] = -1;
             }
 
             foreach (BuildState.Entry se in state.Entries)
@@ -234,6 +245,14 @@ namespace s3molib
                 return Full(plan, "the last merged package is too large to extend", totalBytes);
 
             return plan;
+        }
+
+        /// <summary>File name (without folders) + size + last-write time, used to recognize a file that was moved.</summary>
+        private static string FileFingerprint(string id, long size, long lastWriteTicks)
+        {
+            int slash = id.LastIndexOfAny(new[] { '\\', '/' });
+            string name = slash >= 0 ? id.Substring(slash + 1) : id;
+            return $"{name}|{size}|{lastWriteTicks}";
         }
 
         private static BuildPlan Full(BuildPlan plan, string reason, long totalBytes)

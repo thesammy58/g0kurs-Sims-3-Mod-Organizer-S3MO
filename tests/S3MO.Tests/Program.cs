@@ -87,6 +87,7 @@ public static class Program
         TestSubfolders(work);
         foreach (int seed in new[] { 11, 12, 13, 14 })
             TestIncremental(work, seed, compactThreshold: seed % 2 == 0 ? 1.0 : 0.25);
+        TestMovedPackages(work);
         TestTamperDetection(work);
     }
 
@@ -522,7 +523,7 @@ public static class Program
         {
             string action;
             var mods = p.ModModels;
-            int k = rnd.Next(7);
+            int k = rnd.Next(8);
             switch (k)
             {
                 case 0: // add a package to a mod
@@ -578,6 +579,20 @@ public static class Program
                     action = "new mod " + name;
                     break;
                 }
+                case 6: // move a package into another folder (same or different mod)
+                {
+                    var all = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories);
+                    string f = all[rnd.Next(all.Length)];
+                    var m = mods[rnd.Next(mods.Count)];
+                    string dest = Path.Combine(sc.Mods, m.Name, "Moved" + rnd.Next(3), Path.GetFileName(f));
+                    if (!File.Exists(dest))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        File.Move(f, dest);
+                    }
+                    action = "move " + Path.GetFileName(f) + " to " + m.Name;
+                    break;
+                }
                 default: // nothing changed
                     action = "no change";
                     break;
@@ -588,7 +603,7 @@ public static class Program
             var sources = SourcesFor(p, cache);
 
             var plan = ModBuilder.Plan(build, sources, opts);
-            if (k == 6) Check(plan.UpToDate, "no change -> up to date");
+            if (k == 7) Check(plan.UpToDate, "no change -> up to date");
             var res = ModBuilder.Build(build, sources, opts);
             if (res.Plan.FullRebuild) full++; else if (!res.Plan.UpToDate) { incremental++; incBytes += res.BytesWritten; }
             if (Verbose) Console.WriteLine($"  step {step}: {action} -> {res.Plan}");
@@ -605,6 +620,92 @@ public static class Program
         }
         long totalSize = Directory.GetFiles(build, "*.package").Sum(f => new FileInfo(f).Length);
         Console.WriteLine($"  40 steps: {incremental} incremental, {full} full rebuilds; incremental builds wrote {incBytes / 1024} KB in total (build size {totalSize / 1024} KB)");
+    }
+
+    /// <summary>Key -> (file name|size|mtime of the winning package, stored size), computed independently of ModBuilder.</summary>
+    static Dictionary<ResourceKey, (string who, uint size)> Winners(List<BuildSource> sources)
+    {
+        var map = new Dictionary<ResourceKey, (string, uint)>();
+        for (int s = sources.Count - 1; s >= 0; s--)
+        {
+            string id = sources[s].Id;
+            string who = id.Substring(id.LastIndexOfAny(new[] { '\\', '/' }) + 1) + "|" + sources[s].Size + "|" + sources[s].LastWriteTicks;
+            foreach (var e in sources[s].Package.Entries)
+                if (!Package.IsIgnoredType(e.Type))
+                    map.TryAdd(e.Key, (who, e.FileSize));
+        }
+        return map;
+    }
+
+    static void TestMovedPackages(string work)
+    {
+        Console.WriteLine("Moving packages between folders and mods");
+
+        // 1) No conflicts at all: moving files around (subfolders, other mods, renamed mod folder) must write nothing.
+        {
+            var sc = MakeScenario(Path.Combine(work, "move1"), 41, mods: 12, maxPackages: 4, maxResources: 80, maxSize: 2000, shared: 0);
+            foreach (var line in File.ReadAllLines(Path.Combine(sc.Root, "Profiles", "Test", "modlist.txt"))) { }
+            File.WriteAllLines(Path.Combine(sc.Root, "Profiles", "Test", "modlist.txt"), sc.ModNames.Select(n => "+" + n));
+            string build = Path.Combine(sc.Root, "S", "ModBuilds");
+            var cache = new PackageCache(Path.Combine(sc.Root, "c"), sc.Mods);
+            var p = new ProfileModel(sc.Root); p.Setup("Test");
+            ModBuilder.Build(build, SourcesFor(p, cache), null);
+
+            var files = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories);
+            for (int i = 0; i < files.Length; i += 2)
+            {
+                string dest = Path.Combine(sc.Mods, sc.ModNames[(i * 7) % sc.ModNames.Count], "Sub", "Deeper", Path.GetFileName(files[i]));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                if (!File.Exists(dest)) File.Move(files[i], dest);
+            }
+            p = new ProfileModel(sc.Root); p.Setup("Test");
+            p.RenameMod(sc.ModNames[0], "Renamed Mod");
+            p = new ProfileModel(sc.Root); p.Setup("Test");
+
+            var sources = SourcesFor(p, cache);
+            var plan = ModBuilder.Plan(build, sources, null);
+            Check(!plan.FullRebuild && plan.BytesToWrite == 0 && plan.UpToDate, $"moves without conflicts write nothing ({plan})");
+            var res = ModBuilder.Build(build, sources, null);
+            Check(res.BytesWritten == 0, "nothing written");
+        }
+
+        // 2) With conflicts: only resources whose winner changes are written.
+        foreach (int seed in new[] { 42, 43, 44 })
+        {
+            var sc = MakeScenario(Path.Combine(work, "move" + seed), seed, mods: 15, maxPackages: 4, maxResources: 80, maxSize: 2000, shared: 0.15);
+            string build = Path.Combine(sc.Root, "S", "ModBuilds");
+            var cache = new PackageCache(Path.Combine(sc.Root, "c"), sc.Mods);
+            var opts = new BuildOptions { CompactThreshold = 1.0 };
+            var p = new ProfileModel(sc.Root); p.Setup("Test");
+            var before = SourcesFor(p, cache);
+            ModBuilder.Build(build, before, opts);
+
+            var rnd = new Random(seed);
+            var files = Directory.GetFiles(sc.Mods, "*.package", SearchOption.AllDirectories);
+            foreach (string f in files.Where(_ => rnd.Next(3) == 0))
+            {
+                string dest = Path.Combine(sc.Mods, sc.ModNames[rnd.Next(sc.ModNames.Count)], "Moved", Path.GetFileName(f));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                if (!File.Exists(dest)) File.Move(f, dest);
+            }
+            p = new ProfileModel(sc.Root); p.Setup("Test");
+            var after = SourcesFor(p, cache);
+
+            var w0 = Winners(before); var w1 = Winners(after);
+            long expected = w1.Where(kv => !w0.TryGetValue(kv.Key, out var o) || o.who != kv.Value.who).Sum(kv => (long)kv.Value.size);
+            int expectedRemoved = w0.Keys.Count(k => !w1.ContainsKey(k));
+            long total = w1.Sum(kv => (long)kv.Value.size);
+
+            var plan = ModBuilder.Plan(build, after, opts);
+            Check(!plan.FullRebuild && plan.BytesToWrite == expected && plan.Removed == expectedRemoved,
+                $"seed {seed}: writes only changed winners ({plan.BytesToWrite} vs expected {expected} of {total} bytes)");
+            ModBuilder.Build(build, after, opts);
+
+            string reference = Path.Combine(sc.Root, "R", "ModBuilds");
+            ModBuilder.Build(reference, after, new BuildOptions { ForceFullRebuild = true });
+            Check(SameContent(Effective(build, out _), Effective(reference, out _)), $"seed {seed}: content after moves == full build");
+            Console.WriteLine($"  seed {seed}: moved {files.Length / 3}ish packages, rewrote {expected / 1024} KB of {total / 1024} KB");
+        }
     }
 
     static void TestTamperDetection(string work)
