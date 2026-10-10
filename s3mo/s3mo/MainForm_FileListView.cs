@@ -53,16 +53,11 @@ namespace s3mo
             if (fileListView.Items.Count == 0 || e.Item == null || e.SubItem == null)
                 return;
 
-            if (e.Item.Selected)
-                e.SubItem.BackColor = SystemColors.Highlight;
-            else if (fileListView_conflictLosingPackageModel.Contains(e.Item.Text))
-                e.SubItem.BackColor = Color.LightGreen;
-            else if (fileListView_conflictWinningPackageModel.Contains(e.Item.Text))
-                e.SubItem.BackColor = Color.LightCoral;
-            else
-                e.SubItem.BackColor = (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
-
-            e.DrawBackground();
+            Color back = e.Item.Selected ? SystemColors.Highlight
+                : fileListView_conflictLosingPackageModel.Contains(e.Item.Text) ? Color.LightGreen
+                : fileListView_conflictWinningPackageModel.Contains(e.Item.Text) ? Color.LightCoral
+                : (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
+            Dpi.FillCell(e.Graphics, e.Bounds, back);
 
             if (e.ColumnIndex == 0)
             {

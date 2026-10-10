@@ -39,7 +39,7 @@
             this.fileGroupBox = new System.Windows.Forms.GroupBox();
             this.fileTabControl = new System.Windows.Forms.TabControl();
             this.modTabPage = new System.Windows.Forms.TabPage();
-            this.fileListView = new System.Windows.Forms.ListView();
+            this.fileListView = new s3mo.OwnerDrawListView();
             this.fileHeader = new System.Windows.Forms.ColumnHeader();
             this.fileFlagHeader = new System.Windows.Forms.ColumnHeader();
             this.logGroupBox = new System.Windows.Forms.GroupBox();
@@ -136,6 +136,7 @@
             this.modGroupBox.Dock = System.Windows.Forms.DockStyle.Fill;
             this.modGroupBox.Location = new System.Drawing.Point(0, 0);
             this.modGroupBox.Name = "modGroupBox";
+            this.modGroupBox.Padding = new System.Windows.Forms.Padding(6, 3, 6, 6);
             this.modGroupBox.Size = new System.Drawing.Size(487, 418);
             this.modGroupBox.TabIndex = 5;
             this.modGroupBox.TabStop = false;
@@ -144,9 +145,7 @@
             // 
             this.modListView.AllowColumnReorder = true;
             this.modListView.AllowDrop = true;
-            this.modListView.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.modListView.Dock = System.Windows.Forms.DockStyle.Fill;
             this.modListView.CheckBoxes = true;
             this.modListView.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
             this.modHeader,
@@ -194,15 +193,14 @@
             this.fileGroupBox.Dock = System.Windows.Forms.DockStyle.Fill;
             this.fileGroupBox.Location = new System.Drawing.Point(0, 0);
             this.fileGroupBox.Name = "fileGroupBox";
+            this.fileGroupBox.Padding = new System.Windows.Forms.Padding(6, 3, 6, 6);
             this.fileGroupBox.Size = new System.Drawing.Size(417, 418);
             this.fileGroupBox.TabIndex = 5;
             this.fileGroupBox.TabStop = false;
             // 
             // fileTabControl
             // 
-            this.fileTabControl.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.fileTabControl.Dock = System.Windows.Forms.DockStyle.Fill;
             this.fileTabControl.Controls.Add(this.modTabPage);
             this.fileTabControl.Font = new System.Drawing.Font("Segoe UI Semibold", 9F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point);
             this.fileTabControl.Location = new System.Drawing.Point(7, 14);
@@ -216,7 +214,7 @@
             this.modTabPage.Controls.Add(this.fileListView);
             this.modTabPage.Location = new System.Drawing.Point(4, 24);
             this.modTabPage.Name = "modTabPage";
-            this.modTabPage.Padding = new System.Windows.Forms.Padding(3);
+            this.modTabPage.Padding = new System.Windows.Forms.Padding(0);
             this.modTabPage.Size = new System.Drawing.Size(396, 362);
             this.modTabPage.TabIndex = 0;
             this.modTabPage.Text = "Files";
@@ -224,9 +222,8 @@
             // 
             // fileListView
             // 
-            this.fileListView.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.fileListView.BorderStyle = System.Windows.Forms.BorderStyle.None;
+            this.fileListView.Dock = System.Windows.Forms.DockStyle.Fill;
             this.fileListView.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
             this.fileHeader,
             this.fileFlagHeader});
@@ -637,7 +634,7 @@
         private ToolStripMenuItem modListViewToolStripMenuItemRename;
         private ToolStripSeparator toolStripSeparator2;
         private TabPage modTabPage;
-        private ListView fileListView;
+        private s3mo.OwnerDrawListView fileListView;
         private ColumnHeader fileHeader;
         private ContextMenuStrip modListViewNonSelectedContextMenuStrip;
         private ToolStripMenuItem modListViewNonSelectedToolStripMenuItemCreateEmptyMod;

@@ -37,11 +37,12 @@
             this.contentTabPage = new System.Windows.Forms.TabPage();
             this.packageSplitContainer = new System.Windows.Forms.SplitContainer();
             this.packageGroupBox = new System.Windows.Forms.GroupBox();
-            this.packageListView = new System.Windows.Forms.ListView();
+            this.packageListView = new s3mo.OwnerDrawListView();
             this.packageHeader = new System.Windows.Forms.ColumnHeader();
             this.packageFlagHeader = new System.Windows.Forms.ColumnHeader();
             this.resourceSplitContainer = new System.Windows.Forms.SplitContainer();
             this.resourceGroupBox = new System.Windows.Forms.GroupBox();
+            this.resourceProgressPanel = new System.Windows.Forms.Panel();
             this.resourceProgressLabel = new System.Windows.Forms.Label();
             this.resourceProgressBar = new System.Windows.Forms.ProgressBar();
             this.resourceListView = new System.Windows.Forms.ListView();
@@ -57,7 +58,7 @@
             this.conflictTabPage = new System.Windows.Forms.TabPage();
             this.splitContainer1 = new System.Windows.Forms.SplitContainer();
             this.losingGroupBox = new System.Windows.Forms.GroupBox();
-            this.losingListView = new System.Windows.Forms.ListView();
+            this.losingListView = new s3mo.OwnerDrawListView();
             this.losingResourceHeader = new System.Windows.Forms.ColumnHeader();
             this.losingTagHeader = new System.Windows.Forms.ColumnHeader();
             this.losingPackageHeader1 = new System.Windows.Forms.ColumnHeader();
@@ -65,7 +66,7 @@
             this.losingModHeader = new System.Windows.Forms.ColumnHeader();
             this.losingPackageHeader2 = new System.Windows.Forms.ColumnHeader();
             this.winningGroupBox = new System.Windows.Forms.GroupBox();
-            this.winningListView = new System.Windows.Forms.ListView();
+            this.winningListView = new s3mo.OwnerDrawListView();
             this.winningResourceHeader = new System.Windows.Forms.ColumnHeader();
             this.winningTagHeader = new System.Windows.Forms.ColumnHeader();
             this.winningPackageHeader1 = new System.Windows.Forms.ColumnHeader();
@@ -111,12 +112,12 @@
             // informationTabPage
             // 
             this.informationTabPage.Controls.Add(this.informationNoteTextBox);
+            this.informationTabPage.Controls.Add(this.informationNoteLabel);
             this.informationTabPage.Controls.Add(this.informationURLTextBox);
             this.informationTabPage.Controls.Add(this.informationURLLabel);
-            this.informationTabPage.Controls.Add(this.informationNoteLabel);
             this.informationTabPage.Location = new System.Drawing.Point(4, 24);
             this.informationTabPage.Name = "informationTabPage";
-            this.informationTabPage.Padding = new System.Windows.Forms.Padding(3);
+            this.informationTabPage.Padding = new System.Windows.Forms.Padding(17, 8, 17, 17);
             this.informationTabPage.Size = new System.Drawing.Size(825, 525);
             this.informationTabPage.TabIndex = 3;
             this.informationTabPage.Text = "Information";
@@ -124,9 +125,8 @@
             // 
             // informationNoteTextBox
             // 
-            this.informationNoteTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.informationNoteTextBox.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.informationNoteTextBox.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
             this.informationNoteTextBox.Location = new System.Drawing.Point(20, 83);
             this.informationNoteTextBox.Multiline = true;
             this.informationNoteTextBox.Name = "informationNoteTextBox";
@@ -135,8 +135,7 @@
             // 
             // informationURLTextBox
             // 
-            this.informationURLTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.informationURLTextBox.Dock = System.Windows.Forms.DockStyle.Top;
             this.informationURLTextBox.Location = new System.Drawing.Point(20, 29);
             this.informationURLTextBox.Name = "informationURLTextBox";
             this.informationURLTextBox.Size = new System.Drawing.Size(784, 23);
@@ -145,6 +144,8 @@
             // informationURLLabel
             // 
             this.informationURLLabel.AutoSize = true;
+            this.informationURLLabel.Dock = System.Windows.Forms.DockStyle.Top;
+            this.informationURLLabel.Padding = new System.Windows.Forms.Padding(0, 3, 0, 3);
             this.informationURLLabel.Font = new System.Drawing.Font("Segoe UI Semibold", 9F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point);
             this.informationURLLabel.Location = new System.Drawing.Point(20, 11);
             this.informationURLLabel.Name = "informationURLLabel";
@@ -155,6 +156,8 @@
             // informationNoteLabel
             // 
             this.informationNoteLabel.AutoSize = true;
+            this.informationNoteLabel.Dock = System.Windows.Forms.DockStyle.Top;
+            this.informationNoteLabel.Padding = new System.Windows.Forms.Padding(0, 14, 0, 3);
             this.informationNoteLabel.Font = new System.Drawing.Font("Segoe UI Semibold", 9F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point);
             this.informationNoteLabel.Location = new System.Drawing.Point(20, 65);
             this.informationNoteLabel.Name = "informationNoteLabel";
@@ -249,9 +252,8 @@
             // 
             // resourceGroupBox
             // 
-            this.resourceGroupBox.Controls.Add(this.resourceProgressLabel);
-            this.resourceGroupBox.Controls.Add(this.resourceProgressBar);
             this.resourceGroupBox.Controls.Add(this.resourceListView);
+            this.resourceGroupBox.Controls.Add(this.resourceProgressPanel);
             this.resourceGroupBox.Dock = System.Windows.Forms.DockStyle.Fill;
             this.resourceGroupBox.Location = new System.Drawing.Point(0, 0);
             this.resourceGroupBox.Name = "resourceGroupBox";
@@ -261,32 +263,41 @@
             this.resourceGroupBox.TabStop = false;
             this.resourceGroupBox.Text = "Resource";
             // 
+            // resourceProgressPanel
+            // 
+            this.resourceProgressPanel.Controls.Add(this.resourceProgressLabel);
+            this.resourceProgressPanel.Controls.Add(this.resourceProgressBar);
+            this.resourceProgressPanel.Dock = System.Windows.Forms.DockStyle.Bottom;
+            this.resourceProgressPanel.Name = "resourceProgressPanel";
+            this.resourceProgressPanel.Padding = new System.Windows.Forms.Padding(0, 4, 0, 0);
+            this.resourceProgressPanel.Size = new System.Drawing.Size(424, 20);
+            this.resourceProgressPanel.TabIndex = 5;
+            this.resourceProgressPanel.Visible = false;
+            // 
             // resourceProgressLabel
             // 
-            this.resourceProgressLabel.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+            this.resourceProgressLabel.Dock = System.Windows.Forms.DockStyle.Fill;
             this.resourceProgressLabel.Location = new System.Drawing.Point(62, 498);
             this.resourceProgressLabel.Name = "resourceProgressLabel";
             this.resourceProgressLabel.Size = new System.Drawing.Size(222, 15);
             this.resourceProgressLabel.TabIndex = 4;
             this.resourceProgressLabel.Text = "Reading";
             this.resourceProgressLabel.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
-            this.resourceProgressLabel.Visible = false;
+
             // 
             // resourceProgressBar
             // 
-            this.resourceProgressBar.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+            this.resourceProgressBar.Dock = System.Windows.Forms.DockStyle.Right;
             this.resourceProgressBar.Location = new System.Drawing.Point(290, 499);
             this.resourceProgressBar.Name = "resourceProgressBar";
             this.resourceProgressBar.Size = new System.Drawing.Size(138, 14);
             this.resourceProgressBar.Step = 1;
             this.resourceProgressBar.TabIndex = 3;
-            this.resourceProgressBar.Visible = false;
+
             // 
             // resourceListView
             // 
-            this.resourceListView.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.resourceListView.Dock = System.Windows.Forms.DockStyle.Fill;
             this.resourceListView.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
             this.itemHeader,
             this.resourceNameHeader,
@@ -414,6 +425,7 @@
             this.losingGroupBox.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
             this.losingGroupBox.Location = new System.Drawing.Point(0, 0);
             this.losingGroupBox.Name = "losingGroupBox";
+            this.losingGroupBox.Padding = new System.Windows.Forms.Padding(8, 3, 8, 6);
             this.losingGroupBox.Size = new System.Drawing.Size(819, 258);
             this.losingGroupBox.TabIndex = 2;
             this.losingGroupBox.TabStop = false;
@@ -422,9 +434,7 @@
             // 
             // losingListView
             // 
-            this.losingListView.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.losingListView.Dock = System.Windows.Forms.DockStyle.Fill;
             this.losingListView.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
             this.losingResourceHeader,
             this.losingTagHeader,
@@ -484,6 +494,7 @@
             this.winningGroupBox.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
             this.winningGroupBox.Location = new System.Drawing.Point(0, 0);
             this.winningGroupBox.Name = "winningGroupBox";
+            this.winningGroupBox.Padding = new System.Windows.Forms.Padding(8, 3, 8, 6);
             this.winningGroupBox.Size = new System.Drawing.Size(819, 257);
             this.winningGroupBox.TabIndex = 3;
             this.winningGroupBox.TabStop = false;
@@ -491,9 +502,7 @@
             // 
             // winningListView
             // 
-            this.winningListView.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
+            this.winningListView.Dock = System.Windows.Forms.DockStyle.Fill;
             this.winningListView.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
             this.winningResourceHeader,
             this.winningTagHeader,
@@ -597,8 +606,8 @@
         private TabControl tabControl;
         private TabPage conflictTabPage;
         private SplitContainer splitContainer1;
-        private ListView losingListView;
-        private ListView winningListView;
+        private s3mo.OwnerDrawListView losingListView;
+        private s3mo.OwnerDrawListView winningListView;
         private ColumnHeader losingPackageHeader1;
         private ColumnHeader winningPackageHeader1;
         private ColumnHeader losingBlankHeader;
@@ -625,12 +634,13 @@
         private System.ComponentModel.BackgroundWorker resourceDataBackgroundWorker;
         private TextBox resourceDataTextBox;
         private PictureBox resourceDataPictureBox;
-        private ListView packageListView;
+        private s3mo.OwnerDrawListView packageListView;
         private ColumnHeader packageHeader;
         private SplitContainer resourceSplitContainer;
         private ColumnHeader packageFlagHeader;
         private SplitContainer packageSplitContainer;
         private GroupBox packageGroupBox;
+        private Panel resourceProgressPanel;
         private Label resourceProgressLabel;
         private ProgressBar resourceProgressBar;
         private ColumnHeader resourceNameHeader;

@@ -102,8 +102,9 @@ namespace s3mo
             Dpi.RestoreColumnWidth("Window", "WindowFileListViewFlagHeaderWidth", fileFlagHeader, this);
             Dpi.KeepColumnsScaled(this, flagHeader, priorityHeader, fileFlagHeader);
 
-            this.SizeChanged += (s, e) => FitNameColumns();
-            splitContainer2.SplitterMoved += (s, e) => FitNameColumns();
+            // The lists fill their panes; the name columns take whatever width the other columns leave.
+            Dpi.FillWithColumns(modListView, modHeader);
+            Dpi.FillWithColumns(fileListView, fileHeader);
             this.DpiChanged += (s, e) => BeginInvoke(() => { ApplyToolbarIcons(); FitNameColumns(); });
 
             modListView.SetDoubleBuffered();
@@ -125,9 +126,8 @@ namespace s3mo
         /// <summary>The name columns take the space the other columns leave.</summary>
         private void FitNameColumns()
         {
-            int scroll = Dpi.ScrollBarAllowance(modListView);
-            modHeader.Width = Math.Max(LogicalToDeviceUnits(80), modListView.Width - scroll - flagHeader.Width - priorityHeader.Width);
-            fileHeader.Width = Math.Max(LogicalToDeviceUnits(80), fileListView.Width - scroll - fileFlagHeader.Width);
+            Dpi.FitColumns(modListView, modHeader);
+            Dpi.FitColumns(fileListView, fileHeader);
         }
 
         // ------------------------------------------------------------------ log

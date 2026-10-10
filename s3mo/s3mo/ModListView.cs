@@ -14,7 +14,7 @@ namespace s3mo
     // Check boxes: the list is owner-drawn, so the check box you see is painted by us. The native list view still has
     // its own (invisible) check box area whose position scales differently with DPI, which is why clicks used to miss
     // at high DPI. Now the painted box is also the click target, and the native control's own toggling is blocked.
-    public class ModListView : ListView
+    public class ModListView : OwnerDrawListView
     {
         private const int WM_KEYDOWN = 0x0100, WM_CHAR = 0x0102, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202, WM_LBUTTONDBLCLK = 0x0203;
 

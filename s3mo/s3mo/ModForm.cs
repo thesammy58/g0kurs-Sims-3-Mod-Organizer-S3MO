@@ -98,19 +98,11 @@ namespace s3mo
                 losingTagHeader, losingResourceHeader, losingBlankHeader, losingModHeader,
                 winningTagHeader, winningResourceHeader, winningBlankHeader, winningModHeader, packageFlagHeader);
 
-            this.SizeChanged += (s, e) =>
-            {
-                int scroll = Dpi.ScrollBarAllowance(losingListView);
-                int width = losingListView.Size.Width - losingTagHeader.Width - losingResourceHeader.Width - losingBlankHeader.Width - losingModHeader.Width - scroll;
-                width = (int)((float)width * 0.5f);
-                losingPackageHeader1.Width = width;
-                losingPackageHeader2.Width = width;
-
-                width = winningListView.Size.Width - winningTagHeader.Width - winningResourceHeader.Width - winningBlankHeader.Width - winningModHeader.Width - scroll;
-                width = (int)((float)width * 0.5f);
-                winningPackageHeader1.Width = width;
-                winningPackageHeader2.Width = width;
-            };
+            // Lists fill their boxes; these columns take the remaining width.
+            Dpi.FillWithColumns(losingListView, losingPackageHeader1, losingPackageHeader2);
+            Dpi.FillWithColumns(winningListView, winningPackageHeader1, winningPackageHeader2);
+            Dpi.FillWithColumns(resourceListView, resourceNameHeader);
+            Dpi.FillWithColumns(packageListView, packageHeader);
 
             losingListView.SetDoubleBuffered();
             winningListView.SetDoubleBuffered();
@@ -233,6 +225,8 @@ namespace s3mo
                 item.SubItems.Add(PackageModel.StripExtension(resourceModel.OtherPackageName));
                 winningListView.Items.Add(item);
             }
+            Dpi.FitColumns(losingListView, losingPackageHeader1, losingPackageHeader2); // scroll bars may have appeared
+            Dpi.FitColumns(winningListView, winningPackageHeader1, winningPackageHeader2);
         }
 
         private void losingListView_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
@@ -343,9 +337,9 @@ namespace s3mo
                 item.SubItems.Add(resourceModel.Instance);
                 resourceListView.Items.Add(item);
             }
+            Dpi.FitColumns(resourceListView, resourceNameHeader);
 
-            resourceProgressLabel.Visible = true;
-            resourceProgressBar.Visible = true;
+            resourceProgressPanel.Visible = true;
             resourceProgressBar.Maximum = _resourceModels.Count;
             resourceProgressBar.Value = 0;
             resourceDataBackgroundWorker.RunWorkerAsync();
@@ -398,8 +392,7 @@ namespace s3mo
 
         private void resourceDataBackgroundWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
-            resourceProgressLabel.Visible = false;
-            resourceProgressBar.Visible = false;
+            resourceProgressPanel.Visible = false;
             resourceListView_SelectedIndexChanged(null!, null!);
         }
 
@@ -463,10 +456,9 @@ namespace s3mo
 
             resourceSplitContainer.Visible = false;
             packageSplitContainer.Visible = true;
+            // The right-hand pane of the mod view has never had anything in it; let the package list use the width.
+            packageSplitContainer.Panel2Collapsed = true;
 
-            // These are down here because setting the control visible/invisible will change those values
-            Dpi.RestoreSplitter("ModForm", "ModFormPackageSplitContainerSplitterDistance", packageSplitContainer);
-            Dpi.RestoreColumnWidth("ModForm", "ModFormPackageHeaderWidth", packageHeader, this);
             Dpi.RestoreColumnWidth("ModForm", "ModFormPackageFlagHeaderWidth", packageFlagHeader, this);
 
 
@@ -479,6 +471,7 @@ namespace s3mo
                 item.SubItems.Add(string.Empty);
                 packageListView.Items.Add(item);
             }
+            Dpi.FitColumns(packageListView, packageHeader);
         }
 
         List<string> packageListView_conflictLoser = new List<string>();
@@ -520,16 +513,14 @@ namespace s3mo
             if (packageListView.Items.Count == 0)
                 return;
 
-            if (e.Item!.Selected)
-                e.SubItem!.BackColor = SystemColors.Highlight;
-            else if (packageListView_conflictLoser.Contains(e.Item.Text))
-                e.SubItem!.BackColor = Color.LightGreen;
-            else if (packageListView_conflictWinner.Contains(e.Item.Text))
-                e.SubItem!.BackColor = Color.LightCoral;
-            else
-                e.SubItem!.BackColor = (e.ItemIndex % 2 == 0) ? SystemColors.Window : SystemColors.Control;
+            if (e.Item == null || e.SubItem == null)
+                return;
 
-            e.DrawBackground();
+            Color back = e.Item.Selected ? SystemColors.Highlight
+                : packageListView_conflictLoser.Contains(e.Item.Text) ? Color.LightGreen
+                : packageListView_conflictWinner.Contains(e.Item.Text) ? Color.LightCoral
+                : (e.ItemIndex % 2 == 0) ? SystemColors.Window : SystemColors.Control;
+            Dpi.FillCell(e.Graphics, e.Bounds, back);
 
             if (e.ColumnIndex == 0)
             {

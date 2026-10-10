@@ -107,6 +107,7 @@ namespace s3mo
             finally
             {
                 fileListView.EndUpdate();
+                Dpi.FitColumns(fileListView, fileHeader); // a scroll bar may have appeared
             }
 
             RefreshSelectedModHighlight();
@@ -144,16 +145,11 @@ namespace s3mo
                 return;
 
             // Draw background color
-            if (e.Item.Selected)
-                e.SubItem.BackColor = SystemColors.Highlight;
-            else if (modListView_losingConflictingModModels.Contains(e.Item.Text))
-                e.SubItem.BackColor = Color.LightGreen;
-            else if (modListView_winningConflictingModModels.Contains(e.Item.Text))
-                e.SubItem.BackColor = Color.LightCoral;
-            else
-                e.SubItem.BackColor = (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
-
-            e.DrawBackground();
+            Color back = e.Item.Selected ? SystemColors.Highlight
+                : modListView_losingConflictingModModels.Contains(e.Item.Text) ? Color.LightGreen
+                : modListView_winningConflictingModModels.Contains(e.Item.Text) ? Color.LightCoral
+                : (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
+            Dpi.FillCell(e.Graphics, e.Bounds, back);
 
             Color textColor = e.Item.Selected ? SystemColors.HighlightText : SystemColors.ControlText;
             Font font = modListView.Font;

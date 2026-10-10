@@ -65,6 +65,9 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
   - Double-clicking the check box no longer opens the mod window.
 - **Saved layout:** window size, splitter positions and column widths are saved together with the DPI they were measured at, and scaled when restored. Windows saved on a monitor that's no longer there are moved back on screen.
 - **Toolbar:** toolbar icons are scaled with the window.
+- **Lists fill their panes:** the mod list, the Files tab and the lists in the mod window are now docked instead of anchored. Anchored controls inside the split panes kept their original size at high DPI, which left large empty areas under them.
+- **No more stray colours in lists:** the empty strip right of the last column and below the last row is now painted. It used to show leftover pixels, such as a yellow bar under the mod list.
+- **Mod window:** the package list uses the full width (the right-hand pane was always empty), and the resource list's Name column fills the remaining width.
 
 ## Other fixes
 

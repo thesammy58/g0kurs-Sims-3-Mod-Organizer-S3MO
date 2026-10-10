@@ -62,6 +62,11 @@ namespace s3mo
 
             string failed = result.FailedCount > 0 ? $" {result.FailedCount} package(s) couldn't be read and will be left out of builds (see errors above)." : "";
             Logger.Log($"Scanned {result.PackageCount} packages ({result.CacheHits} unchanged, read from cache) and checked {result.Conflicts.ResourceCount:N0} resources for conflicts in {sw.ElapsedMilliseconds} ms.{failed}");
+            int modsWithConflicts = model.ModModels.Count(m => m.ConflictingMods.Count > 0);
+            int modsWithInternal = model.ModModels.Count(m => m.HasPackageConflictsInside);
+            Logger.Log(result.Conflicts.ConflictingKeyCount == 0
+                ? "No conflicts found: no two packages contain the same resource."
+                : $"{result.Conflicts.ConflictingKeyCount:N0} resources exist in more than one package: {modsWithConflicts} mod(s) overlap with other mods, {modsWithInternal} mod(s) have packages that overlap each other.");
 
             ValidateModBuild();
         }

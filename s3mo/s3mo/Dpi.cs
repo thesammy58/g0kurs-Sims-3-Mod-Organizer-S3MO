@@ -49,9 +49,42 @@ namespace s3mo
             }
         }
 
-        /// <summary>Width of a vertical scroll bar plus the list's border, at the control's DPI.</summary>
-        public static int ScrollBarAllowance(Control c) =>
-            SystemInformation.GetVerticalScrollBarWidthForDpi(c.DeviceDpi) + c.LogicalToDeviceUnits(4);
+        /// <summary>Width the columns of a list can use without a horizontal scroll bar (room is kept for the vertical one).</summary>
+        public static int ColumnSpace(ListView lv)
+        {
+            int sb = SystemInformation.GetVerticalScrollBarWidthForDpi(lv.DeviceDpi);
+            bool verticalShown = lv.Width - lv.ClientSize.Width >= sb;
+            return Math.Max(0, lv.ClientSize.Width - (verticalShown ? 0 : sb));
+        }
+
+        /// <summary>Makes the given columns share whatever width the other columns leave.</summary>
+        public static void FitColumns(ListView lv, params ColumnHeader[] fill)
+        {
+            if (fill.Length == 0 || !lv.IsHandleCreated)
+                return;
+            int others = 0;
+            foreach (ColumnHeader c in lv.Columns)
+                if (Array.IndexOf(fill, c) < 0)
+                    others += c.Width;
+            int each = Math.Max(lv.LogicalToDeviceUnits(60), (ColumnSpace(lv) - others) / fill.Length);
+            foreach (ColumnHeader c in fill)
+                if (c.Width != each)
+                    c.Width = each;
+        }
+
+        /// <summary>Keeps the given columns filling the list whenever the list changes size.</summary>
+        public static void FillWithColumns(ListView lv, params ColumnHeader[] fill)
+        {
+            lv.SizeChanged += (s, e) => FitColumns(lv, fill);
+            lv.HandleCreated += (s, e) => FitColumns(lv, fill);
+        }
+
+        /// <summary>Paints a cell background (instead of setting SubItem.BackColor, which repaints the whole list every time it changes).</summary>
+        public static void FillCell(Graphics g, Rectangle bounds, Color color)
+        {
+            using SolidBrush brush = new SolidBrush(color);
+            g.FillRectangle(brush, bounds);
+        }
 
         /// <summary>Draws a themed check box scaled to the given rectangle.</summary>
         public static void DrawCheckBox(Graphics g, Rectangle box, bool isChecked)
