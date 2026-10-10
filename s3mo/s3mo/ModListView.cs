@@ -27,7 +27,7 @@ namespace s3mo
         public string RelativeFolder => Folder.RelativePath;
 
         /// <summary>Identifies the row across rebuilds (used for the expanded state and the selection).</summary>
-        public string Key => IsMod ? Mod.Name : Path.Combine(Mod.Name, Folder.RelativePath);
+        public string Key => ConflictHighlight.RowKey(Mod.Name, Folder.RelativePath);
     }
 
     // The mod list: owner-drawn rows that form a tree (mods, and the folders inside them).

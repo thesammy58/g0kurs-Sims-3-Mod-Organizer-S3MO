@@ -326,8 +326,11 @@ namespace s3mo
             ValidateModBuild();
         }
 
-        private List<string> modListView_losingConflictingModModels = new List<string>();
-        private List<string> modListView_winningConflictingModModels = new List<string>();
+        // Rows (mods and folders, by ModRow.Key) holding packages that the selection overwrites (green) or that
+        // overwrite the selection (red). A row in both is drawn in a third colour.
+        private readonly HashSet<string> _rowsLosingToSelection = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _rowsWinningOverSelection = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Color LosesColor = Color.LightGreen, WinsColor = Color.LightCoral, BothColor = Color.Khaki;
         private void modListView_ItemSelectionChanged(object sender, ListViewItemSelectionChangedEventArgs e)
         {
             if (_populatingModList)
@@ -370,36 +373,17 @@ namespace s3mo
             }
         }
 
-        /// <summary>Colors the mods that the selected mod wins/loses against.</summary>
+        /// <summary>
+        /// Colours the rows that conflict with the selected mod or folder: green where the selection overwrites
+        /// them, red where they overwrite the selection, including the folders the conflicting packages are in.
+        /// </summary>
         private void RefreshSelectedModHighlight()
         {
-            // Responsible for conflict row color change
-            modListView_losingConflictingModModels.Clear();
-            modListView_winningConflictingModModels.Clear();
+            _rowsLosingToSelection.Clear();
+            _rowsWinningOverSelection.Clear();
 
-            if (SelectedRow is not ModRow row)
-            {
-                modListView.Invalidate();
-                return;
-            }
-
-            ModModel modModel = row.Mod;
-            if (modModel.Enabled && _profileModel.IsFolderEffectivelyEnabled(modModel, row.RelativeFolder))
-            {
-                // For a folder, only the mods that its own packages overlap with
-                IEnumerable<ModModel> conflicts = row.IsMod
-                    ? modModel.ConflictingMods
-                    : modModel.GetPackagesUnder(row.RelativeFolder).SelectMany(p => p.GetConflictingPackagesInOtherMods()).Select(p => p.ModModel).Distinct();
-                foreach (ModModel conflict in conflicts)
-                {
-                    if (!conflict.Enabled)
-                        continue;
-                    if (conflict.Priority < modModel.Priority)
-                        modListView_losingConflictingModModels.Add(conflict.Name);
-                    else if (modModel.Priority < conflict.Priority)
-                        modListView_winningConflictingModModels.Add(conflict.Name);
-                }
-            }
+            if (SelectedRow is ModRow selection && selection.Mod.Enabled && _profileModel.IsFolderEffectivelyEnabled(selection.Mod, selection.RelativeFolder))
+                ConflictHighlight.Compute(selection.Mod, selection.RelativeFolder, _rowsLosingToSelection, _rowsWinningOverSelection);
             modListView.Invalidate();
         }
 
@@ -436,8 +420,9 @@ namespace s3mo
 
             // Draw background color
             Color back = e.Item.Selected ? SystemColors.Highlight
-                : row.IsMod && modListView_losingConflictingModModels.Contains(row.Mod.Name) ? Color.LightGreen
-                : row.IsMod && modListView_winningConflictingModModels.Contains(row.Mod.Name) ? Color.LightCoral
+                : _rowsLosingToSelection.Contains(row.Key) && _rowsWinningOverSelection.Contains(row.Key) ? BothColor
+                : _rowsLosingToSelection.Contains(row.Key) ? LosesColor
+                : _rowsWinningOverSelection.Contains(row.Key) ? WinsColor
                 : (e.ItemIndex % 2 != 0) ? SystemColors.Control : SystemColors.Window;
             Dpi.FillCell(e.Graphics, e.Bounds, back);
 

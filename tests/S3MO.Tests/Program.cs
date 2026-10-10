@@ -89,6 +89,7 @@ public static class Program
             TestIncremental(work, seed, compactThreshold: seed % 2 == 0 ? 1.0 : 0.25);
         TestMovedPackages(work);
         TestDisabledFolders(work);
+        TestConflictHighlight(work);
         TestTamperDetection(work);
     }
 
@@ -784,6 +785,62 @@ public static class Program
         Directory.Move(Path.Combine(root, "Mods", "CAS Stuff", "Female"), Path.Combine(root, "Mods", "CAS Stuff", "Women"));
         p = new ProfileModel(root); p.Setup("Default");
         Check(!p.HasDisabledFoldersBelow(p.GetModModel("CAS Stuff"), ""), "stale entry dropped after the folder was renamed");
+    }
+
+    static void TestConflictHighlight(string work)
+    {
+        Console.WriteLine("Mod list colours for the selected mod or folder");
+        string root = Path.Combine(work, "highlight");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var rnd = new Random(5);
+        var pool = Synthetic.MakePool(rnd, 4);
+        string F(params string[] parts) => Path.Combine(parts);
+        // a package holding resources with the given instance numbers (same type/group), so shared numbers conflict
+        void Pkg(string relative, params int[] ids)
+        {
+            var r = Synthetic.MakeResources(rnd, ids.Length, 10, 50, pool, 0, allowCompression: false);
+            for (int i = 0; i < ids.Length; i++) { r[i].Type = 0x034AEECB; r[i].Group = 0; r[i].Instance = (ulong)ids[i]; }
+            Synthetic.Write(Path.Combine(root, "Mods", relative), r);
+        }
+        Pkg(F("Fixes", "fix.package"), 1);
+        Pkg(F("Store", "store.package"), 1, 2, 3, 4);
+        Pkg(F("Off", "off.package"), 2);
+        Pkg(F("Loose Mods", "Children", "c.package"), 3);
+        Pkg(F("Loose Mods", "Music", "m.package"), 100);
+        Pkg(F("CAS Items", "Female", "f.package"), 50);
+        Pkg(F("CAS Items", "Female", "Hair", "h.package"), 4, 50, 60);
+        Pkg(F("CAS Items", "MERGED", "merged.package"), 60);
+        Pkg(F("CAS Items", "Male", "m.package"), 200);
+        Directory.CreateDirectory(Path.Combine(root, "Profiles", "Default"));
+        File.WriteAllLines(Path.Combine(root, "Profiles", "Default", "modlist.txt"), new[] { "+Fixes", "+Store", "-Off", "+Loose Mods", "+CAS Items" });
+
+        var p = new ProfileModel(root); p.Setup("Default");
+        p.ApplyAnalysis(p.Analyze(null));
+        string Show(ISet<string> s) => "{" + string.Join(", ", s.OrderBy(x => x)) + "}";
+
+        // the Store mod: wins over Fixes, loses to the folders in Loose Mods and CAS Items that hold the overlapping packages
+        var losing = new HashSet<string>(); var winning = new HashSet<string>();
+        ConflictHighlight.Compute(p.GetModModel("Store"), "", losing, winning);
+        Check(losing.SetEquals(new[] { "Fixes" }), "Store overwrites Fixes only: " + Show(losing));
+        Check(winning.SetEquals(new[] { "Loose Mods", F("Loose Mods", "Children"), "CAS Items", F("CAS Items", "Female"), F("CAS Items", "Female", "Hair") }),
+              "rows overwriting Store include the folders on the way to the package: " + Show(winning));
+
+        // a folder: other mods, plus other folders of its own mod (later name wins), but not the folders that hold it
+        losing.Clear(); winning.Clear();
+        ConflictHighlight.Compute(p.GetModModel("CAS Items"), F("Female", "Hair"), losing, winning);
+        bool femaleFirst = StringLogicalComparer.Compare(F("Female", "f.package"), F("Female", "Hair", "h.package")) < 0;
+        var expectLosing = new HashSet<string> { "Store" };
+        var expectWinning = new HashSet<string> { F("CAS Items", "MERGED") };
+        (femaleFirst ? expectLosing : expectWinning).Add(F("CAS Items", "Female")); // the package sits directly in Female
+        Check(losing.SetEquals(expectLosing), "Female\\Hair overwrites: " + Show(losing));
+        Check(winning.SetEquals(expectWinning), "Female\\Hair is overwritten by: " + Show(winning));
+        Check(!losing.Contains("CAS Items") && !winning.Contains("CAS Items"), "the selection's own mod row isn't coloured");
+
+        // switched-off mods and folders without conflicts stay plain
+        Check(!winning.Contains("Off") && !losing.Contains("Off"), "switched-off mod not coloured");
+        losing.Clear(); winning.Clear();
+        ConflictHighlight.Compute(p.GetModModel("CAS Items"), "Male", losing, winning);
+        Check(losing.Count == 0 && winning.Count == 0, "folder without conflicts colours nothing");
     }
 
     static void TestTamperDetection(string work)
