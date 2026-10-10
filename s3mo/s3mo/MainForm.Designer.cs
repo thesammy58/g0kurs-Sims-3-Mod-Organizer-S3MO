@@ -68,6 +68,7 @@
             this.openFolderButton = new System.Windows.Forms.Button();
             this.profileButton = new System.Windows.Forms.Button();
             this.aboutButton = new System.Windows.Forms.Button();
+            this.helpButton = new System.Windows.Forms.Button();
             this.warningButton = new System.Windows.Forms.Button();
             this.openFolderContextMenuStrip = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.openGameFolderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -303,7 +304,7 @@
             this.refreshButton.FlatAppearance.BorderSize = 0;
             this.refreshButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.refreshButton.Image = global::s3mo.Properties.Resources.icons8_refresh_32;
-            this.refreshButton.Location = new System.Drawing.Point(297, 8);
+            this.refreshButton.Location = new System.Drawing.Point(345, 8);
             this.refreshButton.Name = "refreshButton";
             this.refreshButton.Size = new System.Drawing.Size(42, 42);
             this.refreshButton.TabIndex = 1;
@@ -416,7 +417,7 @@
             this.buildButton.FlatAppearance.BorderSize = 0;
             this.buildButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.buildButton.Image = global::s3mo.Properties.Resources.icons8_hammer_32;
-            this.buildButton.Location = new System.Drawing.Point(345, 8);
+            this.buildButton.Location = new System.Drawing.Point(393, 8);
             this.buildButton.Name = "buildButton";
             this.buildButton.Size = new System.Drawing.Size(42, 42);
             this.buildButton.TabIndex = 6;
@@ -430,7 +431,7 @@
             this.installButton.FlatAppearance.BorderSize = 0;
             this.installButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.installButton.Image = global::s3mo.Properties.Resources.icons8_software_installer_32;
-            this.installButton.Location = new System.Drawing.Point(57, 8);
+            this.installButton.Location = new System.Drawing.Point(105, 8);
             this.installButton.Name = "installButton";
             this.installButton.Size = new System.Drawing.Size(42, 42);
             this.installButton.TabIndex = 7;
@@ -444,7 +445,7 @@
             this.optionsButton.FlatAppearance.BorderSize = 0;
             this.optionsButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.optionsButton.Image = global::s3mo.Properties.Resources.icons8_settings_32;
-            this.optionsButton.Location = new System.Drawing.Point(105, 8);
+            this.optionsButton.Location = new System.Drawing.Point(153, 8);
             this.optionsButton.Name = "optionsButton";
             this.optionsButton.Size = new System.Drawing.Size(42, 42);
             this.optionsButton.TabIndex = 8;
@@ -457,7 +458,7 @@
             this.clearCacheButton.FlatAppearance.BorderSize = 0;
             this.clearCacheButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.clearCacheButton.Image = global::s3mo.Properties.Resources.icons8_broom_32;
-            this.clearCacheButton.Location = new System.Drawing.Point(249, 8);
+            this.clearCacheButton.Location = new System.Drawing.Point(297, 8);
             this.clearCacheButton.Name = "clearCacheButton";
             this.clearCacheButton.Size = new System.Drawing.Size(42, 42);
             this.clearCacheButton.TabIndex = 9;
@@ -470,7 +471,7 @@
             this.openFolderButton.FlatAppearance.BorderSize = 0;
             this.openFolderButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.openFolderButton.Image = global::s3mo.Properties.Resources.icons8_browse_folder_32;
-            this.openFolderButton.Location = new System.Drawing.Point(201, 8);
+            this.openFolderButton.Location = new System.Drawing.Point(249, 8);
             this.openFolderButton.Name = "openFolderButton";
             this.openFolderButton.Size = new System.Drawing.Size(42, 42);
             this.openFolderButton.TabIndex = 11;
@@ -483,7 +484,7 @@
             this.profileButton.FlatAppearance.BorderSize = 0;
             this.profileButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.profileButton.Image = global::s3mo.Properties.Resources.icons8_profiles_32;
-            this.profileButton.Location = new System.Drawing.Point(153, 8);
+            this.profileButton.Location = new System.Drawing.Point(201, 8);
             this.profileButton.Name = "profileButton";
             this.profileButton.Size = new System.Drawing.Size(42, 42);
             this.profileButton.TabIndex = 12;
@@ -503,6 +504,18 @@
             this.toolTip.SetToolTip(this.aboutButton, "Info");
             this.aboutButton.UseVisualStyleBackColor = true;
             this.aboutButton.Click += new System.EventHandler(this.aboutButton_Click);
+            // 
+            // helpButton
+            // 
+            this.helpButton.FlatAppearance.BorderSize = 0;
+            this.helpButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.helpButton.Location = new System.Drawing.Point(57, 8);
+            this.helpButton.Name = "helpButton";
+            this.helpButton.Size = new System.Drawing.Size(42, 42);
+            this.helpButton.TabIndex = 17;
+            this.toolTip.SetToolTip(this.helpButton, "Quick guide: what the colours and icons mean");
+            this.helpButton.UseVisualStyleBackColor = true;
+            this.helpButton.Click += new System.EventHandler(this.helpButton_Click);
             // 
             // warningButton
             // 
@@ -577,6 +590,7 @@
             this.Controls.Add(this.progressBar);
             this.Controls.Add(this.warningButton);
             this.Controls.Add(this.aboutButton);
+            this.Controls.Add(this.helpButton);
             this.Controls.Add(this.profileButton);
             this.Controls.Add(this.openFolderButton);
             this.Controls.Add(this.clearCacheButton);
@@ -654,6 +668,7 @@
         private Button openFolderButton;
         private Button profileButton;
         private Button aboutButton;
+        private Button helpButton;
         private Button warningButton;
         private ProgressBar progressBar;
         private Label progressLabel;

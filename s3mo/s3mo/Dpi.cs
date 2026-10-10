@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.Windows.Forms.VisualStyles;
 
 namespace s3mo
@@ -14,6 +15,45 @@ namespace s3mo
         public static readonly Image ErrorPlusMinus = Properties.Resources.error_plusminus;
         public static readonly Image PackageMinus = Properties.Resources.package_minus;
         public static readonly Image Warning = Properties.Resources.icons8_general_warning_sign_32;
+
+        /// <summary>A "?" in a circle, in the colour of the Info icon (drawn large and scaled down like the other toolbar icons).</summary>
+        public static readonly Image Help = MakeHelpIcon(128);
+
+        private static Image MakeHelpIcon(int size)
+        {
+            Color fill = Color.FromArgb(41, 150, 243);
+            try
+            {
+                using Bitmap info = new Bitmap(Properties.Resources.icons8_info_32);
+                Color c = info.GetPixel(info.Width / 8 + 1, info.Height / 2); // left part of its circle, away from the "i"
+                if (c.A > 200)
+                    fill = Color.FromArgb(255, c);
+            }
+            catch { /* keep the default blue */ }
+
+            Bitmap bmp = new Bitmap(size, size);
+            using Graphics g = Graphics.FromImage(bmp);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            float inset = size / 16f; // the icons8 circles leave a 2px margin at 32px
+            using (SolidBrush b = new SolidBrush(fill))
+                g.FillEllipse(b, inset, inset, size - 2 * inset, size - 2 * inset);
+
+            using GraphicsPath path = new GraphicsPath();
+            using (FontFamily family = new FontFamily(GenericFontFamilies.SansSerif))
+            {
+                FontFamily face = FontFamily.Families.FirstOrDefault(f => f.Name == "Segoe UI") ?? family;
+                path.AddString("?", face, (int)FontStyle.Bold, size * 0.66f, PointF.Empty, StringFormat.GenericTypographic);
+            }
+            RectangleF r = path.GetBounds();
+            using (Matrix m = new Matrix())
+            {
+                m.Translate(size / 2f - (r.X + r.Width / 2f), size / 2f - (r.Y + r.Height / 2f));
+                path.Transform(m);
+            }
+            g.FillPath(Brushes.White, path);
+            return bmp;
+        }
     }
 
     /// <summary>

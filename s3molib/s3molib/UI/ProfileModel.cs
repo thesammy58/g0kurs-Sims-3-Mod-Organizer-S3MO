@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using ns;
 
 namespace s3molib
 {
@@ -169,16 +170,21 @@ namespace s3molib
             foreach (ModModel m in _modModelLookup.Values)
                 all.AddRange(m.Packages);
 
+            cache?.EnsureLoaded(); // unchanged packages come from s3mo.cache, also on the first scan after starting
             cache?.BeginScan();
             cache?.ResetCounters();
             int failed = 0;
+            var oddHeaders = new System.Collections.Concurrent.ConcurrentBag<string>();
 
             Parallel.ForEach(all, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount), CancellationToken = cancellationToken }, pm =>
             {
                 try
                 {
-                    Package package = cache != null ? cache.GetPackage(pm.FilePath, out _) : Package.Load(pm.FilePath);
+                    bool fromCache = false;
+                    Package package = cache != null ? cache.GetPackage(pm.FilePath, out fromCache) : Package.Load(pm.FilePath);
                     pm.SetPackage(package);
+                    if (!fromCache && package.HasUnusedHeaderData)
+                        oddHeaders.Add(Path.Combine(pm.ModModel.Name, pm.Name));
                 }
                 catch (Exception ex)
                 {
@@ -189,6 +195,7 @@ namespace s3molib
             });
 
             cancellationToken.ThrowIfCancellationRequested();
+            LogUnusedHeaderData(oddHeaders);
 
             result.PackageCount = all.Count;
             result.FailedCount = failed;
@@ -197,6 +204,21 @@ namespace s3molib
             result.Conflicts = ConflictAnalyzer.Analyze(_modModelLookup.Values, excluded.Count == 0 ? null : p => !IsInDisabledFolder(p, excluded));
             cache?.Save();
             return result;
+        }
+
+        /// <summary>One plain-language note for all newly read packages whose header has data in unused fields.</summary>
+        private static void LogUnusedHeaderData(IEnumerable<string> names)
+        {
+            var list = new List<string>(names);
+            if (list.Count == 0)
+                return;
+            list.Sort(StringLogicalComparer.Compare);
+            const int shown = 5;
+            string files = string.Join(", ", list.GetRange(0, Math.Min(shown, list.Count))) + (list.Count > shown ? $" and {list.Count - shown} more" : "");
+            string what = list.Count == 1
+                ? $"{files} has extra data in a part of its file header that the game doesn't use"
+                : $"{list.Count} packages have extra data in parts of their file header that the game doesn't use ({files})";
+            Logger.Log($"Note: {what}. This is usually a date or version number left by the tool that made the file, and it's harmless: the game ignores it, and merged files get a clean header. (Only shown when a file is read for the first time.)");
         }
 
         /// <summary>Publishes the conflicts found by <see cref="Analyze"/> to the models (UI thread).</summary>

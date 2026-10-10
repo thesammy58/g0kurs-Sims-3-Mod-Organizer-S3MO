@@ -79,7 +79,14 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
 - **No more stray colours in lists:** the empty strip right of the last column and below the last row is now painted. It used to show leftover pixels, such as a yellow bar under the mod list.
 - **Mod window:** the package list uses the full width (the right-hand pane was always empty), and the resource list's Name column fills the remaining width.
 
+## Quick guide
+
+- A **?** button next to Info opens a quick guide that explains the row colours, check boxes, flag icons, priority, the Files list and every toolbar button, using the real icons. It stays open beside the main window, so you can compare it with the list.
+
 ## Other fixes
+
+- **The index cache is now read when the program starts.** It was saved after every scan but only used for scans later in the same session, so every start read all packages again.
+- **Clearer header note:** "File contains non-zero unused byte(s)" is replaced by one note per scan. It says how many packages have extra data in header fields the game doesn't use (usually a date or version number from the tool that made them), names a few of them, and says that it's harmless.
 
 - **Logging:**
   - Background work no longer writes into the log box from another thread, which could cause random freezes.

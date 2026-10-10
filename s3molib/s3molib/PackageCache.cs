@@ -53,6 +53,7 @@ namespace s3molib
         /// <summary>The package as a build source, re-reading its index if the file changed since it was scanned.</summary>
         public BuildSource GetBuildSource(string fullPath, string id)
         {
+            EnsureLoaded();
             Package p = GetPackage(fullPath, out _, out long size, out long ticks);
             return new BuildSource(id, p, size, ticks);
         }
@@ -124,12 +125,24 @@ namespace s3molib
             lastWriteTicks = info.LastWriteTimeUtc.Ticks;
         }
 
+        /// <summary>Reads the cache file once; later calls do nothing. Scans and builds call this themselves.</summary>
+        public void EnsureLoaded()
+        {
+            lock (_lock)
+            {
+                if (!_loaded)
+                    Load();
+            }
+        }
+        private bool _loaded;
+
         public void Load()
         {
             lock (_lock)
             {
                 _records.Clear();
                 _dirty = false;
+                _loaded = true;
 
                 if (!File.Exists(_cacheFilePath))
                     return;

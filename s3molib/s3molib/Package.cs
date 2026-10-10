@@ -105,6 +105,9 @@ namespace s3molib
             w.Write(new byte[28]);          // 0x44 - 0x60
         }
 
+        /// <summary>The header has data in fields the game doesn't use (set when the file is read, not from the cache).</summary>
+        public bool HasUnusedHeaderData { get; private set; }
+
         /// <summary>Load the package index at path (resource data is read on demand).</summary>
         public static Package Load(string path)
         {
@@ -141,11 +144,11 @@ namespace s3molib
                 if (indexPosition == 0)
                     Logger.LogWarning($"File does not have index position - {path}");
 
-                // Unused header areas: 12-36, 40-44, 48-60, 68-96. Warn once per file, not once per byte.
-                if (HasNonZero(h.Slice(12, 24)) || HasNonZero(h.Slice(40, 4)) || HasNonZero(h.Slice(48, 12)) || HasNonZero(h.Slice(68, 28)))
-                    Logger.LogWarning($"File contains non-zero unused byte(s) - {path}");
-
                 Package package = new Package(path, indexCount, indexLength, indexPosition);
+
+                // Header fields the game doesn't use (12-36, 40-44, 48-60, 68-96). Some tools write dates or version
+                // numbers there; it's harmless, so it's only noted (once per scan, see ProfileModel.Analyze).
+                package.HasUnusedHeaderData = HasNonZero(h.Slice(12, 24)) || HasNonZero(h.Slice(40, 4)) || HasNonZero(h.Slice(48, 12)) || HasNonZero(h.Slice(68, 28));
 
                 if (indexCount == 0)
                     return package;

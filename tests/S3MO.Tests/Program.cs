@@ -90,6 +90,7 @@ public static class Program
         TestMovedPackages(work);
         TestDisabledFolders(work);
         TestConflictHighlight(work);
+        TestHeaderNote(work);
         TestTamperDetection(work);
     }
 
@@ -841,6 +842,48 @@ public static class Program
         losing.Clear(); winning.Clear();
         ConflictHighlight.Compute(p.GetModModel("CAS Items"), "Male", losing, winning);
         Check(losing.Count == 0 && winning.Count == 0, "folder without conflicts colours nothing");
+    }
+
+    static void TestHeaderNote(string work)
+    {
+        Console.WriteLine("Note about extra data in unused header fields");
+        string root = Path.Combine(work, "headernote");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var rnd = new Random(3);
+        var pool = Synthetic.MakePool(rnd, 4);
+        for (int i = 0; i < 7; i++)
+        {
+            string path = Path.Combine(root, "Mods", "Tool Output", $"odd{i}.package");
+            Synthetic.Write(path, Synthetic.MakeResources(rnd, 3, 10, 50, pool, 0));
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Write);
+            f.Position = 24; f.Write(new byte[] { 0x5E, 0x1A, 0x33, 0x4F }); // a "created" date, as some tools write
+        }
+        Synthetic.Write(Path.Combine(root, "Mods", "Clean", "clean.package"), Synthetic.MakeResources(rnd, 3, 10, 50, pool, 0));
+        Directory.CreateDirectory(Path.Combine(root, "Profiles", "Default"));
+        File.WriteAllLines(Path.Combine(root, "Profiles", "Default", "modlist.txt"), new[] { "+Tool Output", "+Clean" });
+
+        var lines = new List<string>();
+        void Collect(string s) { lock (lines) lines.Add(s); }
+        Logger.InfoLoggedEvent += Collect; Logger.WarningLoggedEvent += Collect;
+        try
+        {
+            var cache = new PackageCache(Path.Combine(root, "s3mo.cache"), Path.Combine(root, "Mods"));
+            var p = new ProfileModel(root); p.Setup("Default");
+            p.Analyze(cache);
+            var notes = lines.Where(l => l.Contains("file header")).ToList();
+            Check(notes.Count == 1, $"one note for all 7 files, got {notes.Count}");
+            Check(notes.Count == 1 && notes[0].Contains("7 packages") && notes[0].Contains("harmless") && notes[0].Contains("and 2 more") && !notes[0].Contains("clean.package"),
+                  "note names the count, a few files and that it's harmless: " + notes.FirstOrDefault());
+            Check(!lines.Any(l => l.Contains("non-zero unused")), "old per-file warning gone");
+
+            lines.Clear();
+            cache = new PackageCache(Path.Combine(root, "s3mo.cache"), Path.Combine(root, "Mods"));
+            p = new ProfileModel(root); p.Setup("Default");
+            var second = p.Analyze(cache);
+            Check(second.CacheHits == 8, $"a new start reads s3mo.cache without being told to: {second.CacheHits} of 8 from the cache");
+            Check(!lines.Any(l => l.Contains("file header")), "not repeated once the files come from the cache");
+        }
+        finally { Logger.InfoLoggedEvent -= Collect; Logger.WarningLoggedEvent -= Collect; }
     }
 
     static void TestTamperDetection(string work)

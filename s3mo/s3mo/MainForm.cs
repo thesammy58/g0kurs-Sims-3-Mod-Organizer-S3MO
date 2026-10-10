@@ -49,7 +49,8 @@ namespace s3mo
             Logger.WarningLoggedEvent += EnqueueLog;
             Logger.ErrorLoggedEvent += EnqueueLog;
 
-            foreach (Button b in new[] { aboutButton, installButton, optionsButton, profileButton, openFolderButton, clearCacheButton, refreshButton, buildButton, warningButton, playButton })
+            helpButton.Image = Icons.Help;
+            foreach (Button b in new[] { aboutButton, helpButton, installButton, optionsButton, profileButton, openFolderButton, clearCacheButton, refreshButton, buildButton, warningButton, playButton })
                 if (b.Image != null)
                     _toolbarIcons[b] = b.Image;
 
@@ -237,6 +238,39 @@ namespace s3mo
             form.FormClosed += (s, e) => this.Enabled = true;
             this.Enabled = false;
             form.Show();
+        }
+
+        private HelpForm? _helpForm;
+
+        /// <summary>Opens the quick guide next to the main window. It doesn't block the main window, and only one is open at a time.</summary>
+        private void helpButton_Click(object sender, EventArgs e)
+        {
+            if (_helpForm != null && !_helpForm.IsDisposed)
+            {
+                if (_helpForm.WindowState == FormWindowState.Minimized)
+                    _helpForm.WindowState = FormWindowState.Normal;
+                _helpForm.Activate();
+                return;
+            }
+
+            var icons = new Dictionary<string, Image>();
+            void Add(string name, Button b) { if (_toolbarIcons.TryGetValue(b, out Image? img)) icons[name] = img; }
+            Add("about", aboutButton); Add("install", installButton); Add("options", optionsButton); Add("profile", profileButton);
+            Add("openFolder", openFolderButton); Add("clearCache", clearCacheButton); Add("refresh", refreshButton);
+            Add("build", buildButton); Add("warning", warningButton); Add("play", playButton);
+
+            _helpForm = new HelpForm(icons, Icons.Help) { Icon = this.Icon };
+            _helpForm.FormClosed += (s, a) => _helpForm = null;
+
+            // Beside the main window when there's room on its screen, otherwise centred over it
+            Rectangle area = Screen.FromControl(this).WorkingArea;
+            Size size = _helpForm.Size;
+            Point at = Bounds.Right + size.Width <= area.Right ? new Point(Bounds.Right, Bounds.Top)
+                     : Bounds.Left - size.Width >= area.Left ? new Point(Bounds.Left - size.Width, Bounds.Top)
+                     : new Point(Bounds.Left + (Width - size.Width) / 2, Bounds.Top + (Height - size.Height) / 2);
+            at.Y = Math.Max(area.Top, Math.Min(at.Y, area.Bottom - size.Height));
+            _helpForm.Location = at;
+            _helpForm.Show(this);
         }
 
         private void installButton_Click(object sender, EventArgs e)
