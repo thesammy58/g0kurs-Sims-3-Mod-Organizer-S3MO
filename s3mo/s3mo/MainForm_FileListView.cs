@@ -77,7 +77,7 @@ namespace s3mo
 
                 if (packageModel.LoadError != null)
                 {
-                    e.Graphics.DrawImage(Dpi.Icon(Icons.Warning, size), x, y);
+                    Dpi.DrawIcon(e.Graphics, Icons.Warning, x, y, size);
                     return;
                 }
 
@@ -93,7 +93,7 @@ namespace s3mo
                 Image icon = beforeSome && afterSome ? Icons.ErrorPlusMinus
                            : afterSome ? Icons.ErrorPlus
                            : Icons.ErrorMinus;
-                e.Graphics.DrawImage(Dpi.Icon(icon, size), x, y);
+                Dpi.DrawIcon(e.Graphics, icon, x, y, size);
             }
         }
 

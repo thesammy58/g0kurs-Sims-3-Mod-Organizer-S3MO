@@ -545,11 +545,11 @@ namespace s3mo
                 int j = StringLogicalComparer.Compare(packageModel.Name, conflictingPackageModels[conflictingPackageModels.Count - 1].Name);
 
                 if (i < 0 && j < 0)
-                    e.Graphics.DrawImage(Dpi.Icon(Icons.ErrorMinus, size), at);
+                    Dpi.DrawIcon(e.Graphics, Icons.ErrorMinus, at.X, at.Y, size);
                 else if (i > 0 && j < 0)
-                    e.Graphics.DrawImage(Dpi.Icon(Icons.ErrorPlusMinus, size), at);
+                    Dpi.DrawIcon(e.Graphics, Icons.ErrorPlusMinus, at.X, at.Y, size);
                 else if (i > 0 && j > 0)
-                    e.Graphics.DrawImage(Dpi.Icon(Icons.ErrorPlus, size), at);
+                    Dpi.DrawIcon(e.Graphics, Icons.ErrorPlus, at.X, at.Y, size);
             }
         }
 

@@ -35,8 +35,8 @@ namespace s3mo
                 if (_iconCache.TryGetValue((source, size), out Bitmap? cached))
                     return cached;
 
+                // Don't copy the source's resolution: some of the icons claim 2-3 DPI in their file metadata.
                 Bitmap bmp = new Bitmap(size, size);
-                bmp.SetResolution(source.HorizontalResolution, source.VerticalResolution);
                 using (Graphics g = Graphics.FromImage(bmp))
                 {
                     g.InterpolationMode = size % source.Width == 0 ? InterpolationMode.NearestNeighbor : InterpolationMode.HighQualityBicubic;
@@ -48,6 +48,14 @@ namespace s3mo
                 return bmp;
             }
         }
+
+        /// <summary>
+        /// Draws an icon at exactly size×size device pixels. Always pass the size: Graphics.DrawImage(image, x, y)
+        /// sizes the image by the DPI stored in the file, and the flag icons claim 2-3 DPI, so they came out
+        /// hundreds of pixels wide and only a transparent corner showed in the cell.
+        /// </summary>
+        public static void DrawIcon(Graphics g, Image source, int x, int y, int size) =>
+            g.DrawImage(Icon(source, size), new Rectangle(x, y, size, size));
 
         /// <summary>Width the columns of a list can use without a horizontal scroll bar (room is kept for the vertical one).</summary>
         public static int ColumnSpace(ListView lv)
