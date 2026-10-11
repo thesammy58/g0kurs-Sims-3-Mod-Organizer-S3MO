@@ -1,4 +1,4 @@
-> **This copy has been updated (v1.1.0):** much faster startup and conflict checks, incremental merges, packages in subfolders, and proper high-DPI support. See [CHANGES.md](CHANGES.md) for details and how to build it (`build.bat`).
+> **This copy has been updated (v1.2.0):** much faster startup and conflict checks, incremental merges, mods with subfolders, proper high-DPI support, a quick guide, and a backup of the game's Mods folder before the first build. See [CHANGES.md](CHANGES.md) for details and how to build it (`build.bat`).
 
 # g0kur's Sims 3 Mod Organizer (S3MO)
 **Organize Mods/CC for Sims 3 and find conflicting resources.**

@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>False</AllowUnsafeBlocks>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <!-- The DPI mode is chosen at startup in Program.cs (PerMonitorV2 by default, overridable in s3mo.ini). -->
     <!-- These are warnings in the original code base; don't let them hide new problems in the build output. -->
     <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8622;CS8625;WFO1000</NoWarn>

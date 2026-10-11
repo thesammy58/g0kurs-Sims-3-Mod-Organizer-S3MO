@@ -5,7 +5,7 @@ namespace s3mo
 {
     internal static class Program
     {
-        public const string Version = "1.1.0";
+        public const string Version = "1.2.0";
 
         private static StreamWriter? _log;
         private static readonly object _logLock = new object();

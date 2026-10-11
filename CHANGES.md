@@ -1,6 +1,14 @@
-# S3MO 1.1.0: what changed
+# S3MO 1.2.0: what changed
 
 This version fixes four problems: slow startup, merges that redo everything, no subfolders, and broken layouts at high DPI. Your mods, profiles and settings work as before, and nothing has to be converted.
+
+## New in 1.2.0
+
+Everything else on this page came with 1.1.0.
+
+- **Backup before the first build:** S3MO offers to copy the game's Mods folder before it changes anything there, and offers to delete that copy a few starts later. See [Backup of the game's Mods folder](#backup-of-the-games-mods-folder).
+- **Clear caches** asks before deleting and says in the log when it's done.
+- **Settings file:** `s3mo.ini` with a setting written twice no longer crashes the program at startup.
 
 ## Installing
 
