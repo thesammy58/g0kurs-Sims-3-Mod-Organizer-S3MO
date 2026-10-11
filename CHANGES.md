@@ -99,6 +99,8 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
 
 ## Other fixes
 
+- **Clear caches asks first and reports back:** the broom button asks "Clear your game's caches?" before deleting anything, and the log says when it's finished and how much was deleted. If nothing is selected in Settings, it says so. Large folders like WorldCaches are deleted in the background, so the window doesn't freeze.
+
 - **The index cache is now read when the program starts.** It was saved after every scan but only used for scans later in the same session, so every start read all packages again.
 - **Clearer header note:** "File contains non-zero unused byte(s)" is replaced by one note per scan. It says how many packages have extra data in header fields the game doesn't use (usually a date or version number from the tool that made them), names a few of them, and says that it's harmless.
 

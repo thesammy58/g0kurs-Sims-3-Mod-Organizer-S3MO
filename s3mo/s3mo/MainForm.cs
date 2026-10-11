@@ -405,8 +405,11 @@ namespace s3mo
 
         #endregion
 
-        private void clearCacheButton_Click(object sender, EventArgs e)
+        private async void clearCacheButton_Click(object sender, EventArgs e)
         {
+            if (_isBuilding)
+                return;
+
             if (!Settings.TryGetSettings("DocumentsFolderPath", out string path) || path.Length == 0)
             {
                 MessageBox.Show("No path entered for Sims 3 documents folder in settings");
@@ -460,24 +463,52 @@ namespace s3mo
             if (On("ClearNRaasScriptErrors"))
                 deleteFileList.AddRange(FilesIn(path, "ScriptError*.xml"));
 
-            foreach (string p in deleteFileList)
+            // Only what exists is deleted; nothing selected in Settings means there's nothing to do
+            deleteFileList = deleteFileList.Where(File.Exists).ToList();
+            deleteFolderList = deleteFolderList.Where(Directory.Exists).ToList();
+            bool anySelected = new[] { "ClearCASPartCache", "ClearCompositorCache", "ClearScriptCache", "ClearSimCompositorCache", "ClearSocialCache",
+                "ClearDCCacheDCC", "ClearDCCacheMissingdeps", "ClearDownloadsBin", "ClearFeaturedItems", "ClearIGACache", "ClearSavedSimsDownloadedSims",
+                "ClearSigsCacheBin", "ClearThumbnails", "ClearWorldCaches", "ClearNRaasScriptErrors" }.Any(On);
+            if (!anySelected)
             {
-                if (File.Exists(p))
-                {
-                    Logger.Log("Deleting File " + Path.GetFileName(p));
-                    try { File.Delete(p); }
-                    catch (Exception ex) { Logger.LogError($"Couldn't delete {p}: {ex.Message}"); }
-                }
+                MessageBox.Show("No caches are selected. Choose which ones to clear in Settings.", "Clear caches", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
             }
-            foreach (string p in deleteFolderList)
+
+            if (MessageBox.Show("Clear your game's caches? This can be customized in Settings.", "Clear caches", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+
+            this.Enabled = false; // big folders (WorldCaches, Thumbnails) are deleted in the background
+            int files = 0, folders = 0, failed = 0;
+            try
             {
-                if (Directory.Exists(p))
+                await Task.Run(() =>
                 {
-                    Logger.Log("Deleting Folder " + Path.GetFileName(p));
-                    try { Directory.Delete(p, true); }
-                    catch (Exception ex) { Logger.LogError($"Couldn't delete {p}: {ex.Message}"); }
-                }
+                    foreach (string p in deleteFileList)
+                    {
+                        Logger.Log("Deleting File " + Path.GetFileName(p));
+                        try { File.Delete(p); files++; }
+                        catch (Exception ex) { failed++; Logger.LogError($"Couldn't delete {p}: {ex.Message}"); }
+                    }
+                    foreach (string p in deleteFolderList)
+                    {
+                        Logger.Log("Deleting Folder " + Path.GetFileName(p));
+                        try { Directory.Delete(p, true); folders++; }
+                        catch (Exception ex) { failed++; Logger.LogError($"Couldn't delete {p}: {ex.Message}"); }
+                    }
+                });
             }
+            finally
+            {
+                this.Enabled = true;
+            }
+
+            string done = files + folders == 0 && failed == 0
+                ? "Finished clearing the game's caches: they were already empty."
+                : $"Finished clearing the game's caches: deleted {files} file(s) and {folders} folder(s).";
+            if (failed > 0)
+                done += $" {failed} couldn't be deleted (see above); close the game and try again.";
+            Logger.Log(done);
         }
 
         private void refreshButton_Click(object sender, EventArgs e) => ResetModel();
