@@ -69,9 +69,7 @@ namespace s3mo
                 Caption = "Sims 3 Mod Organizer",
                 Heading = "Back up your Mods folder first?",
                 Text = "Do you want to back up your entire Mods folder before building? An initial backup is highly recommended, " +
-                       "so you can verify that the merge works without issues during your first use.\n\n" +
-                       "Building replaces Resource.cfg in the game's Mods folder, so mods still in that folder (for example in Mods\\Packages) " +
-                       "stop loading. Move them into S3MO's own Mods folder.",
+                       "so you can verify that the merge works without issues during your first use.",
                 Icon = TaskDialogIcon.Information,
                 AllowCancel = true,
                 Verification = new TaskDialogVerificationCheckBox("Don't ask again"),
