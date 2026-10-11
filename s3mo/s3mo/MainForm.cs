@@ -59,13 +59,14 @@ namespace s3mo
             SetupBackupMenu();
             modListView.ExpandRequested += modListView_ExpandRequested;
             LoadExpandedRows();
+            Shown += (s, e) => BeginInvoke(() => OfferToDeleteInitialBackup());
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (_isBuilding)
             {
-                MessageBox.Show($"{_busyWith} is still running. Please wait for it to finish.", "Please wait", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{_busyWith} Please wait for it to finish.", "Please wait", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 e.Cancel = true;
                 return;
             }

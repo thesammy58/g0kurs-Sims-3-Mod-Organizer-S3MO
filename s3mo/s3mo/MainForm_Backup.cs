@@ -11,7 +11,17 @@ namespace s3mo
         private const string AskToBackUpSetting = "AskToBackUpGameMods";
 
         /// <summary>What's running while <see cref="_isBuilding"/> is set, for the "please wait" message.</summary>
-        private string _busyWith = "A build";
+        private string _busyWith = "A build is still running.";
+
+        // The backup made before the first build: S3MO offers to delete it once the merge has had a chance to prove
+        // itself (a few starts later, with at least one build in between). Backups made from the menu are left alone.
+        private const string InitialBackupSetting = "InitialGameModsBackup";
+        private const string StartsSinceBackupSetting = "StartsSinceInitialBackup";
+        private const string BuildsSinceBackupSetting = "BuildsSinceInitialBackup";
+        private const string OfferToDeleteSetting = "OfferToDeleteInitialBackup";
+        private const int StartsBeforeDeleteOffer = 5;
+
+        private static int GetIntSetting(string key) => Settings.TryGetSettings(key, out string v) && int.TryParse(v, out int n) ? n : 0;
 
         private static string S3moFolder => AppDomain.CurrentDomain.BaseDirectory;
 
@@ -134,7 +144,7 @@ namespace s3mo
             catch (Exception) { /* network drives and the like: just try */ }
 
             _isBuilding = true; // keeps builds and "needs rebuild" checks from starting, and the window open
-            _busyWith = "A backup";
+            _busyWith = "The backup is still being made.";
             this.Enabled = false;
             progressLabel.Text = "Backing up the game's Mods folder...";
             progressLabel.Visible = true;
@@ -146,6 +156,13 @@ namespace s3mo
             try
             {
                 GameModsBackup.Result result = await Task.Run(() => GameModsBackup.Create(gameMods, S3moFolder, contents, p => _buildProgress = p));
+                if (beforeBuild)
+                {
+                    Settings.SetSettings(InitialBackupSetting, Path.GetFileName(result.BackupFolder));
+                    Settings.SetSettings(StartsSinceBackupSetting, 0);
+                    Settings.SetSettings(BuildsSinceBackupSetting, 0);
+                    Settings.WriteSettings();
+                }
                 Logger.Log($"Backed up {result.FilesCopied:N0} files ({FormatSize(result.BytesCopied)}) from the game's Mods folder to {result.BackupFolder} in {sw.Elapsed.TotalSeconds:0} s.");
 
                 if (result.Failed.Count > 0)
@@ -177,10 +194,106 @@ namespace s3mo
             finally
             {
                 _isBuilding = false;
-                _busyWith = "A build";
+                _busyWith = "A build is still running.";
                 _buildProgress = null;
                 progressLabel.Visible = false;
                 progressBar.Visible = false;
+                this.Enabled = true;
+            }
+        }
+
+        /// <summary>Called after every successful build.</summary>
+        private void CountBuildForBackupReminder()
+        {
+            if (Settings.TryGetSettings(InitialBackupSetting, out string name) && name.Length > 0)
+                Settings.SetSettings(BuildsSinceBackupSetting, GetIntSetting(BuildsSinceBackupSetting) + 1);
+        }
+
+        /// <summary>
+        /// At startup: once the backup made before the first build is a few starts old (with a build since), offers
+        /// to delete it. "Keep backup" asks again a few starts later, unless "Do not show this message again" is ticked.
+        /// </summary>
+        private async void OfferToDeleteInitialBackup()
+        {
+            if (!Settings.TryGetSettings(InitialBackupSetting, out string name) || name.Length == 0)
+                return;
+            string folder = Path.Combine(GameModsBackup.BackupRoot(S3moFolder), name);
+            if (!Directory.Exists(folder))
+            {
+                // Deleted by hand: the first-use backup has done its job, so builds don't offer a new one either
+                Settings.SetSettings(InitialBackupSetting, string.Empty);
+                Settings.SetSettings(AskToBackUpSetting, false);
+                Settings.WriteSettings();
+                return;
+            }
+            if (Settings.TryGetSettings(OfferToDeleteSetting, out string offer) && bool.TryParse(offer, out bool on) && !on)
+                return;
+
+            int starts = GetIntSetting(StartsSinceBackupSetting) + 1;
+            Settings.SetSettings(StartsSinceBackupSetting, starts);
+            Settings.WriteSettings();
+            if (starts < StartsBeforeDeleteOffer || GetIntSetting(BuildsSinceBackupSetting) == 0)
+                return;
+
+            long size = await Task.Run(() => GameModsBackup.SizeOf(folder));
+            if (IsDisposed || _isBuilding || !Directory.Exists(folder))
+                return;
+
+            var delete = new TaskDialogButton("Delete backup");
+            var keep = new TaskDialogButton("Keep backup");
+            var page = new TaskDialogPage
+            {
+                Caption = "Sims 3 Mod Organizer",
+                Heading = "Delete the Mods backup?",
+                Text = $"A backup folder containing {FormatSize(size)} of mod files was detected (made {Directory.GetCreationTime(folder):d}). " +
+                       "If you'd like, you may delete this backup once you have verified the merge works without issue for you.\n\n" +
+                       "Delete the backup folder now?",
+                Icon = TaskDialogIcon.Information,
+                AllowCancel = true,
+                Verification = new TaskDialogVerificationCheckBox("Do not show this message again"),
+            };
+            page.Buttons.Add(delete);
+            page.Buttons.Add(keep);
+            page.DefaultButton = keep; // deleting is the one you can't undo
+
+            TaskDialogButton choice = TaskDialog.ShowDialog(this, page);
+            if (page.Verification.Checked)
+                Settings.SetSettings(OfferToDeleteSetting, false);
+            if (choice == delete)
+                await DeleteBackupAsync(folder, size);
+            else
+                Settings.SetSettings(StartsSinceBackupSetting, 0); // ask again a few starts from now
+            Settings.WriteSettings();
+        }
+
+        private async Task DeleteBackupAsync(string folder, long size)
+        {
+            if (_isBuilding)
+                return;
+            _isBuilding = true;
+            _busyWith = "The backup is still being deleted.";
+            this.Enabled = false;
+            progressLabel.Text = "Deleting the backup...";
+            progressLabel.Visible = true;
+            try
+            {
+                await Task.Run(() => GameModsBackup.Delete(folder));
+                Settings.SetSettings(InitialBackupSetting, string.Empty);
+                Settings.SetSettings(AskToBackUpSetting, false); // the merge works for them; no "first build" backup offer again
+                Logger.Log($"Deleted the backup of the game's Mods folder ({FormatSize(size)} freed).");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Couldn't delete the backup: " + ex.Message);
+                MessageBox.Show($"The backup couldn't be deleted completely: {ex.Message}{Environment.NewLine}{Environment.NewLine}" +
+                    "Close any windows or programs that use files in it and try again, or delete it yourself (the folder button's menu opens the backups).",
+                    "Couldn't delete the backup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _isBuilding = false;
+                _busyWith = "A build is still running.";
+                progressLabel.Visible = false;
                 this.Enabled = true;
             }
         }

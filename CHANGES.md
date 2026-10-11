@@ -91,6 +91,10 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
   - Free space is checked first, and progress is shown like a build.
   - A copy that's interrupted is never mistaken for a backup.
   - "Don't ask again" turns the question off.
+- **Offered for deletion later:** after S3MO has been started 5 times since that first backup, with at least one build in between, it says how much space the backup takes and asks whether to delete it.
+  - "Keep backup" asks again a few starts later, unless "Do not show this message again" is ticked.
+  - Backups made from the folder menu are never suggested for deletion.
+  - A deletion that's cut short never leaves something that looks like a complete backup.
 - **Any time:** the folder button's menu can make a new backup and open the backups folder.
 
 ## Other fixes

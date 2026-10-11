@@ -935,6 +935,17 @@ public static class Program
         // a second backup in the same minute gets its own folder
         var r2 = GameModsBackup.Create(game, s3mo, c, null, default, new DateTime(2026, 10, 11, 18, 45, 0));
         Check(r2.BackupFolder != r.BackupFolder && Directory.Exists(r.BackupFolder), "second backup doesn't overwrite the first: " + Path.GetFileName(r2.BackupFolder));
+
+        // deleting: size first, read-only files are no obstacle, the folder of backups goes once it's empty
+        long size = GameModsBackup.SizeOf(r.BackupFolder);
+        Check(size >= c.TotalBytes, $"backup size counts its files: {size} >= {c.TotalBytes}");
+        File.SetAttributes(Path.Combine(r.BackupFolder, "Mods", "Packages", "hair.package"), FileAttributes.ReadOnly);
+        GameModsBackup.Delete(r.BackupFolder);
+        Check(!Directory.Exists(r.BackupFolder) && !Directory.EnumerateDirectories(GameModsBackup.BackupRoot(s3mo), "*.incomplete").Any(), "deleted completely, read-only file included");
+        Check(GameModsBackup.HasBackup(s3mo), "the other backup is untouched");
+        GameModsBackup.Delete(r2.BackupFolder);
+        Check(!GameModsBackup.HasBackup(s3mo) && !Directory.Exists(GameModsBackup.BackupRoot(s3mo)), "empty backups folder removed too");
+        Check(Directory.Exists(game) && File.Exists(Path.Combine(game, "Packages", "hair.package")), "the game's Mods folder itself is never touched");
     }
 
     static void TestTamperDetection(string work)

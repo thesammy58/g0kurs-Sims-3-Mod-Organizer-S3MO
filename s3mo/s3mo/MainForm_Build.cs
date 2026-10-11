@@ -168,6 +168,7 @@ namespace s3mo
                     : plan.FullRebuild ? $"Full build ({plan.Reason}): wrote {result.ResourcesWritten:N0} resources"
                     : $"Updated build: {DescribePlan(plan)}, kept {plan.Unchanged:N0}";
                 Logger.Log($"{what} - {result.BytesWritten / 1048576.0:0.0} MB written, {result.OutputFileCount} merged file(s), {list.Count} packages, {stopwatch.ElapsedMilliseconds} ms.");
+                CountBuildForBackupReminder();
 
                 if (problems.Count > 0)
                 {

@@ -54,6 +54,50 @@ namespace s3molib
             return false;
         }
 
+        /// <summary>Total size of the files in a folder (0 when it doesn't exist).</summary>
+        public static long SizeOf(string folder)
+        {
+            if (!Directory.Exists(folder))
+                return 0;
+            long total = 0;
+            var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 };
+            foreach (string f in Directory.EnumerateFiles(folder, "*", options))
+            {
+                try { total += new FileInfo(f).Length; } catch (IOException) { }
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// Deletes a backup. It's renamed to ".incomplete" first, so if deleting stops halfway (a file in use, say)
+        /// what's left is never taken for a complete backup; the next backup removes it. The backups folder itself
+        /// goes too once it's empty.
+        /// </summary>
+        public static void Delete(string backupFolder)
+        {
+            if (!Directory.Exists(backupFolder))
+                return;
+            string doomed = backupFolder + IncompleteSuffix;
+            for (int i = 2; Directory.Exists(doomed); i++)
+                doomed = $"{backupFolder} ({i}){IncompleteSuffix}";
+            Directory.Move(backupFolder, doomed);
+
+            // Copied files keep their read-only flag, which would stop Directory.Delete
+            var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 };
+            foreach (string f in Directory.EnumerateFiles(doomed, "*", options))
+            {
+                FileAttributes a = File.GetAttributes(f);
+                if ((a & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(f, a & ~FileAttributes.ReadOnly);
+            }
+            Directory.Delete(doomed, true);
+
+            string root = Path.GetDirectoryName(backupFolder);
+            if (root != null && Path.GetFileName(root).Equals(FolderName, StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(root) && !Directory.EnumerateFileSystemEntries(root).GetEnumerator().MoveNext())
+                Directory.Delete(root);
+        }
+
         /// <summary>Lists what's in the game's Mods folder, apart from ModBuilds.</summary>
         public static Contents Scan(string gameModsFolder)
         {
