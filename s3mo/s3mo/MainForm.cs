@@ -56,6 +56,7 @@ namespace s3mo
 
             SetupBuildButtonMenu();
             SetupModListContextMenu();
+            SetupBackupMenu();
             modListView.ExpandRequested += modListView_ExpandRequested;
             LoadExpandedRows();
         }
@@ -64,7 +65,7 @@ namespace s3mo
         {
             if (_isBuilding)
             {
-                MessageBox.Show("A build is still running. Please wait for it to finish.", "Building", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{_busyWith} is still running. Please wait for it to finish.", "Please wait", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 e.Cancel = true;
                 return;
             }

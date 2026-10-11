@@ -77,10 +77,10 @@ namespace s3mo
             E(Tool("install"), "Install", "Adds .package, .sims3pack or .zip files as a new mod. Folders inside a zip are kept.");
             E(Tool("options"), "Settings", "Where the game and its Documents folder are, how big each merged file may get, the priority of the merged files in Resource.cfg, and which game caches the broom button clears.");
             E(Tool("profile"), "Profiles", "Separate setups with their own mod order and ticks. Every profile uses the same Mods folder.");
-            E(Tool("openFolder"), "Open folder", "Opens the game folder, the Sims 3 Documents folder or the organizer's folder.");
+            E(Tool("openFolder"), "Folders and backups", "Opens the game folder, the Sims 3 Documents folder or the organizer's folder. Also makes a backup of the game's Mods folder, and opens your backups.");
             E(Tool("clearCache"), "Clear caches", "Deletes the game's cache files chosen in Settings. Worth doing after changing mods.");
             E(Tool("refresh"), "Refresh", "Reads the Mods folder again, for example after adding files in Explorer.");
-            E(Tool("build"), "Build", "Merges the ticked mods into a few large files in Mods\\ModBuilds, in the game's Documents folder, which the game loads faster than many small files. Only changes are written. Right-click or Shift+click for a full rebuild.");
+            E(Tool("build"), "Build", "Merges the ticked mods into a few large files in Mods\\ModBuilds, in the game's Documents folder, which the game loads faster than many small files. Only changes are written. Right-click or Shift+click for a full rebuild. Before the first build, it offers to back up the game's Mods folder.");
             E(Tool("warning"), "Needs rebuild", "Lit when the merged files don't match the list anymore. Point at it to see what changed.");
             E(Tool("play"), "Play", "Starts the game.");
 

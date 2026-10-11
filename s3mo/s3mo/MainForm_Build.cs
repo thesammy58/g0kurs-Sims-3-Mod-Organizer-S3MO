@@ -125,6 +125,9 @@ namespace s3mo
                 return;
             if (!TryGetBuildFolders(true, out string sims3ModsFolderPath, out string buildFolder))
                 return;
+            // The first build changes the game's Mods folder; offer a backup of it first
+            if (!await OfferBackupBeforeBuildAsync(sims3ModsFolderPath) || _isBuilding)
+                return;
 
             _isBuilding = true; // also keeps new "needs rebuild" checks from starting
             this.Enabled = false;

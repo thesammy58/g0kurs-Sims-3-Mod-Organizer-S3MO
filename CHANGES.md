@@ -83,6 +83,16 @@ These numbers were measured on Linux, where opening a file is cheap. The old mer
 
 - A **?** button next to Info opens a quick guide that explains the row colours, check boxes, flag icons, priority, the Files list and every toolbar button, using the real icons. It stays open beside the main window, so you can compare it with the list.
 
+## Backup of the game's Mods folder
+
+- **Offered before the first build:** building replaces `Resource.cfg` in the game's Mods folder, so mods still in that folder (for example in `Mods\Packages`) stop loading. When there's no backup yet and the folder has files S3MO didn't make, pressing Build first asks whether to back it up.
+  - The copy goes to `Game Mods Backup\<date and time>\Mods` next to `s3mo.exe`, with a note on how to put it back.
+  - `ModBuilds` is left out, because S3MO can always make it again.
+  - Free space is checked first, and progress is shown like a build.
+  - A copy that's interrupted is never mistaken for a backup.
+  - "Don't ask again" turns the question off.
+- **Any time:** the folder button's menu can make a new backup and open the backups folder.
+
 ## Other fixes
 
 - **The index cache is now read when the program starts.** It was saved after every scan but only used for scans later in the same session, so every start read all packages again.

@@ -91,6 +91,7 @@ public static class Program
         TestDisabledFolders(work);
         TestConflictHighlight(work);
         TestHeaderNote(work);
+        TestGameModsBackup(work);
         TestTamperDetection(work);
     }
 
@@ -884,6 +885,56 @@ public static class Program
             Check(!lines.Any(l => l.Contains("file header")), "not repeated once the files come from the cache");
         }
         finally { Logger.InfoLoggedEvent -= Collect; Logger.WarningLoggedEvent -= Collect; }
+    }
+
+    static void TestGameModsBackup(string work)
+    {
+        Console.WriteLine("Backing up the game's Mods folder");
+        string root = Path.Combine(work, "backup");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        string game = Path.Combine(root, "The Sims 3", "Mods");
+        string s3mo = Path.Combine(root, "S3MO");
+        Directory.CreateDirectory(s3mo);
+        void Put(string relative, string text) { string f = Path.Combine(game, relative); Directory.CreateDirectory(Path.GetDirectoryName(f)!); File.WriteAllText(f, text); }
+
+        // only what S3MO makes: nothing to offer
+        Put("Resource.cfg", "Priority 495\r\nPackedFile \"ModBuilds/*.package\"\r\n\r\nPackedFile \"Extra/*.package\"\r\n");
+        Put(Path.Combine("ModBuilds", "Merge0.package"), new string('x', 5000));
+        Put(Path.Combine("ModBuilds", "s3mo.buildstate"), "state");
+        var c = GameModsBackup.Scan(game);
+        Check(c.UserFileCount == 0 && c.Files.Count == 1, $"S3MO's own Resource.cfg and ModBuilds don't count: {c.UserFileCount} user file(s), {c.Files.Count} to copy");
+        Check(!GameModsBackup.HasBackup(s3mo), "no backup yet");
+
+        // the game's usual setup with CC in Packages
+        Put("Resource.cfg", "Priority 500\r\nPackedFile *.package\r\nPackedFile */*.package\r\n");
+        Put(Path.Combine("Packages", "hair.package"), "hair");
+        Put(Path.Combine("Packages", "Sub", "shoes.package"), "shoes");
+        Put(Path.Combine("Overrides", "x.package"), "override");
+        DateTime old = new DateTime(2015, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(Path.Combine(game, "Packages", "hair.package"), old);
+        c = GameModsBackup.Scan(game);
+        Check(c.UserFileCount == 4 && c.Files.Count == 4 && c.Examples.Count == 3, $"CC and the game's Resource.cfg count: {c.UserFileCount}");
+        Check(c.TotalBytes == c.Files.Sum(f => f.Length), "total size adds up");
+
+        // an interrupted backup doesn't count and is cleaned up
+        Directory.CreateDirectory(Path.Combine(GameModsBackup.BackupRoot(s3mo), "2026-01-01 10.00.incomplete", "Mods"));
+        Check(!GameModsBackup.HasBackup(s3mo), "interrupted backup isn't a backup");
+
+        var reports = new List<long>();
+        var r = GameModsBackup.Create(game, s3mo, c, p => reports.Add(p.BytesDone), default, new DateTime(2026, 10, 11, 18, 45, 0));
+        string copied = Path.Combine(r.BackupFolder, "Mods");
+        Check(Path.GetFileName(r.BackupFolder) == "2026-10-11 18.45" && GameModsBackup.HasBackup(s3mo), "dated backup folder: " + r.BackupFolder);
+        Check(r.FilesCopied == 4 && r.Failed.Count == 0, $"all 4 files copied ({r.FilesCopied}, {r.Failed.Count} failed)");
+        Check(File.ReadAllText(Path.Combine(copied, "Packages", "Sub", "shoes.package")) == "shoes" && File.Exists(Path.Combine(copied, "Resource.cfg")), "folders and files kept");
+        Check(!Directory.Exists(Path.Combine(copied, "ModBuilds")), "ModBuilds left out");
+        Check(File.GetLastWriteTimeUtc(Path.Combine(copied, "Packages", "hair.package")) == old, "file dates kept");
+        Check(File.Exists(Path.Combine(r.BackupFolder, "About this backup.txt")), "explains how to restore");
+        Check(!Directory.EnumerateDirectories(GameModsBackup.BackupRoot(s3mo), "*.incomplete").Any(), "interrupted leftover removed");
+        Check(reports.Count == 4 && reports[^1] == c.TotalBytes, "progress reaches the total");
+
+        // a second backup in the same minute gets its own folder
+        var r2 = GameModsBackup.Create(game, s3mo, c, null, default, new DateTime(2026, 10, 11, 18, 45, 0));
+        Check(r2.BackupFolder != r.BackupFolder && Directory.Exists(r.BackupFolder), "second backup doesn't overwrite the first: " + Path.GetFileName(r2.BackupFolder));
     }
 
     static void TestTamperDetection(string work)
