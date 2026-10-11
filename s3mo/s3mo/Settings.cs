@@ -46,7 +46,7 @@ namespace s3mo
                 if (i < 0)
                     continue;
 
-                _settings.Add(line.Substring(0, i), line.Substring(i + 1));
+                _settings[line.Substring(0, i).Trim()] = line.Substring(i + 1).Trim(); // a key written twice (by hand) keeps the last value instead of crashing
             }
         }
 
