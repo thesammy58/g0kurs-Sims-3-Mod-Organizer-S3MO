@@ -1,0 +1,2 @@
+# Batch files need Windows line endings (cmd.exe can miss labels in files with Unix line endings)
+*.bat text eol=crlf
